@@ -5,6 +5,7 @@
 
 // DEFAULT GOOGLE APPS SCRIPT WEB APP URL (ฝังลงในโค้ด เพื่อให้ทุกเครื่องและมือถือทุกเครื่องใช้งานได้ทันที)
 const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbwaRmmOmClpSoU_7KQTE-cU45m4DMk8eafWL0lEWpKWBM0WuVk5y2Yto10419BGE0ey/exec";
+const DEFAULT_ADMIN_PIN = "1234";
 
 // GLOBAL STATE
 const STATE = {
@@ -20,7 +21,8 @@ const STATE = {
   gasUrl: localStorage.getItem('gas_webapp_url') || DEFAULT_GAS_URL,
   selectedMonth: '',
   categoryChart: null,
-  isSyncing: false
+  isSyncing: false,
+  isAdminUnlocked: sessionStorage.getItem('admin_session_unlocked') === 'true'
 };
 
 // Initialize Application
@@ -1079,13 +1081,13 @@ function renderAdminItems() {
             ${catNames[item.category] || item.category}
           </span>
         </td>
-        <td class="py-3 px-4 text-center">
+        <td class="py-3 px-3 text-center">
           <span class="inline-block px-2.5 py-1 rounded-lg text-xs ${stockClass}">
             ${item.stock}
           </span>
         </td>
-        <td class="py-3 px-4 text-center text-slate-600 font-medium">${item.unit}</td>
-        <td class="py-3 px-4 text-center">
+        <td class="py-3 px-3 text-center text-slate-600 font-medium">${item.unit}</td>
+        <td class="py-3 px-3 text-center">
           <div class="inline-flex items-center gap-1 justify-center">
             <button onclick="quickAddStock('${item.id}', 1)" class="px-2 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-700 rounded-md text-xs font-semibold transition" title="เติม +1">+1</button>
             <button onclick="quickAddStock('${item.id}', 5)" class="px-2 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-700 rounded-md text-xs font-semibold transition" title="เติม +5">+5</button>
@@ -1093,10 +1095,16 @@ function renderAdminItems() {
           </div>
         </td>
         <td class="py-3 px-4 text-center">
-          <button onclick="openRestockModal('${item.id}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition inline-flex items-center gap-1">
-            <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
-            <span>เติมของ</span>
-          </button>
+          <div class="inline-flex items-center gap-1.5 justify-center">
+            <button onclick="openRestockModal('${item.id}')" class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition inline-flex items-center gap-1" title="เติมของเพิ่มเข้าสต็อก">
+              <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+              <span>เติมของ</span>
+            </button>
+            <button onclick="openEditStockModal('${item.id}')" class="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1" title="แก้ไขยอดคงเหลือโดยตรง">
+              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+              <span>แก้ไขยอด</span>
+            </button>
+          </div>
         </td>
       </tr>
     `;
@@ -1298,6 +1306,231 @@ function submitAddNewItem() {
   renderCategoryPills();
 
   showToast(`เพิ่ม "${name}" เข้าสู่คลังเรียบร้อยแล้ว`, 'success');
+}
+
+/**
+ * ==========================================
+ * ADMIN AUTHENTICATION & DIRECT STOCK EDIT
+ * ==========================================
+ */
+let currentEditStockItem = null;
+
+function getAdminPassword() {
+  return localStorage.getItem('admin_security_pin') || DEFAULT_ADMIN_PIN;
+}
+
+function handleAdminTabClick() {
+  if (STATE.isAdminUnlocked) {
+    switchTab('admin');
+  } else {
+    openAdminAuthModal();
+  }
+}
+
+function openAdminAuthModal() {
+  const modal = document.getElementById('admin-auth-modal');
+  const err = document.getElementById('admin-auth-error');
+  const input = document.getElementById('admin-password-input');
+  if (err) err.classList.add('hidden');
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 100);
+  }
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeAdminAuthModal() {
+  const modal = document.getElementById('admin-auth-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function verifyAdminPassword(e) {
+  if (e) e.preventDefault();
+  const input = document.getElementById('admin-password-input');
+  const entered = input ? input.value.trim() : '';
+  const actualPass = getAdminPassword();
+
+  if (entered === actualPass) {
+    STATE.isAdminUnlocked = true;
+    sessionStorage.setItem('admin_session_unlocked', 'true');
+    closeAdminAuthModal();
+    updateAdminLockBadgeUI(true);
+    switchTab('admin');
+    showToast('เข้าสู่ระบบผู้ดูแลเรียบร้อยแล้ว', 'success');
+  } else {
+    const err = document.getElementById('admin-auth-error');
+    if (err) err.classList.remove('hidden');
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+  }
+}
+
+function lockAdminSession() {
+  STATE.isAdminUnlocked = false;
+  sessionStorage.removeItem('admin_session_unlocked');
+  updateAdminLockBadgeUI(false);
+  switchTab('requisition');
+  showToast('ล็อกระบบผู้ดูแลเรียบร้อยแล้ว', 'info');
+}
+
+function updateAdminLockBadgeUI(isUnlocked) {
+  const badge = document.getElementById('admin-lock-badge');
+  const mLock = document.getElementById('m-admin-lock');
+  if (badge) {
+    badge.innerHTML = isUnlocked ? `<i data-lucide="unlock" class="w-3 h-3 text-emerald-400"></i>` : `<i data-lucide="lock" class="w-3 h-3 text-slate-400"></i>`;
+  }
+  if (mLock) {
+    mLock.textContent = isUnlocked ? '🔓' : '🔒';
+  }
+  lucide.createIcons();
+}
+
+/**
+ * หน้าต่างแก้ไขยอด Stock คงเหลือโดยตรง
+ */
+function openEditStockModal(itemId) {
+  const item = STATE.items.find(i => i.id === itemId);
+  if (!item) return;
+
+  currentEditStockItem = item;
+
+  const catNames = { lc: 'LC หลักชัย', nll: 'NLL หนองละลอก', wc: 'WC วังจันทร์', maid: 'อุปกรณ์แม่บ้าน' };
+  document.getElementById('edit-item-cat').textContent = catNames[item.category] || item.category;
+  document.getElementById('edit-item-name').textContent = item.name;
+  document.getElementById('edit-item-code').textContent = `#${item.code || '-'}`;
+  document.getElementById('edit-item-prev-stock').textContent = item.stock;
+  document.getElementById('edit-item-unit-label').textContent = item.unit;
+  document.getElementById('edit-new-stock-input').value = item.stock;
+  document.getElementById('edit-stock-reason-select').value = 'นับสต็อกประจำเดือน / ตรวจนับจริง';
+  document.getElementById('edit-stock-note-custom').value = '';
+  document.getElementById('edit-stock-note-custom').classList.add('hidden');
+
+  document.getElementById('edit-stock-modal').classList.remove('hidden');
+}
+
+function closeEditStockModal() {
+  document.getElementById('edit-stock-modal').classList.add('hidden');
+  currentEditStockItem = null;
+}
+
+function adjustEditStockInput(delta) {
+  const input = document.getElementById('edit-new-stock-input');
+  if (!input) return;
+  let val = parseInt(input.value) || 0;
+  val = Math.max(0, val + delta);
+  input.value = val;
+}
+
+function handleStockReasonChange(val) {
+  const custom = document.getElementById('edit-stock-note-custom');
+  if (custom) {
+    custom.classList.toggle('hidden', val !== 'other');
+    if (val === 'other') custom.focus();
+  }
+}
+
+async function submitEditStockDirect() {
+  if (!currentEditStockItem) return;
+
+  const input = document.getElementById('edit-new-stock-input');
+  const newStock = parseInt(input.value);
+  if (isNaN(newStock) || newStock < 0) {
+    showToast('กรุณาระบุจำนวนสต็อกที่ถูกต้อง (ไม่ต่ำกว่า 0)', 'warning');
+    return;
+  }
+
+  const reasonSelect = document.getElementById('edit-stock-reason-select').value;
+  const customNote = (document.getElementById('edit-stock-note-custom').value || '').trim();
+  const finalNote = reasonSelect === 'other' ? (customNote || 'ปรับปรุงยอดสต็อก') : reasonSelect;
+  const actor = (document.getElementById('admin-actor-name').value || 'ผู้ดูแลระบบ').trim();
+
+  const prevStock = currentEditStockItem.stock;
+  currentEditStockItem.stock = newStock;
+
+  const btn = document.getElementById('btn-save-edit-stock');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span> บันทึก...`;
+  }
+
+  // บันทึกลง restock/adjustment log
+  const diff = newStock - prevStock;
+  const logNote = `แก้ไขยอดสต็อก: ${prevStock} ➔ ${newStock} (${diff >= 0 ? '+' + diff : diff}) [${finalNote}]`;
+  recordRestockLog(currentEditStockItem, Math.abs(diff), prevStock, actor, logNote);
+
+  // ส่งบันทึกตรงเข้า Google Sheets
+  sendToGoogleSheets({
+    action: 'updateItem',
+    adminName: actor,
+    category: currentEditStockItem.category,
+    rowNumber: currentEditStockItem.rowNumber || null,
+    name: currentEditStockItem.name,
+    fullName: currentEditStockItem.fullName || currentEditStockItem.name,
+    stock: newStock,
+    unit: currentEditStockItem.unit,
+    note: logNote
+  });
+
+  localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
+
+  closeEditStockModal();
+  renderAdminItems();
+  renderItems();
+  renderCategoryPills();
+  renderMonthlySummary();
+
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i><span>บันทึกยอดใหม่</span>`;
+  }
+
+  showToast(`แก้ไขยอด "${currentEditStockItem.name}" เป็น ${newStock} ${currentEditStockItem.unit} เรียบร้อยแล้ว`, 'success');
+}
+
+/**
+ * เปลี่ยนรหัสผ่าน Admin
+ */
+function openChangePasswordModal() {
+  document.getElementById('cur-pass-input').value = '';
+  document.getElementById('new-pass-input').value = '';
+  document.getElementById('confirm-pass-input').value = '';
+  document.getElementById('change-pass-error').classList.add('hidden');
+  document.getElementById('change-password-modal').classList.remove('hidden');
+}
+
+function closeChangePasswordModal() {
+  document.getElementById('change-password-modal').classList.add('hidden');
+}
+
+function submitChangePassword() {
+  const curPass = (document.getElementById('cur-pass-input').value || '').trim();
+  const newPass = (document.getElementById('new-pass-input').value || '').trim();
+  const confirmPass = (document.getElementById('confirm-pass-input').value || '').trim();
+  const errEl = document.getElementById('change-pass-error');
+
+  const actualPass = getAdminPassword();
+
+  if (curPass !== actualPass) {
+    errEl.textContent = 'รหัสผ่านปัจจุบันไม่ถูกต้อง';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if (!newPass || newPass.length < 3) {
+    errEl.textContent = 'รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 3 ตัวอักษร';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if (newPass !== confirmPass) {
+    errEl.textContent = 'รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  localStorage.setItem('admin_security_pin', newPass);
+  closeChangePasswordModal();
+  showToast('เปลี่ยนรหัสผ่านผู้ดูแลระบบเรียบร้อยแล้ว', 'success');
 }
 
 /**
