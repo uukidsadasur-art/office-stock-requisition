@@ -1,14 +1,6 @@
 /**
  * ระบบตัดเบิกของใช้สำนักงานและแม่บ้าน (Office & Housekeeper Inventory Requisition System)
  * Google Apps Script Web App Backend
- * เชื่อมต่อกับ Google Spreadsheet 4 Sheet:
- * 1. อปก.คข.LC 
- * 2. อปก.คข.NLL
- * 3. อปก.คข.WC
- * 4. อปก.แม่บ้าน ต.ค.
- * และสร้างชีตบันทึกประวัติอัตโนมัติ:
- * - ประวัติการเบิก (Requisition Log)
- * - ประวัติการเติมสต็อก (Restock Log)
  */
 
 const SHEET_CONFIGS = {
@@ -112,11 +104,6 @@ function doPost(e) {
       const result = handleAddItem(payload);
       return jsonResponse(result);
     }
-
-    if (action === "updateItem") {
-      const result = handleUpdateItem(payload);
-      return jsonResponse(result);
-    }
     
     return jsonResponse({ success: false, error: "Invalid action: " + action });
   } catch (err) {
@@ -124,9 +111,6 @@ function doPost(e) {
   }
 }
 
-/**
- * ดึงข้อมูลสินค้าคงเหลือทั้งหมดจาก 4 ชีต
- */
 function getAllItems() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const allItems = [];
@@ -192,9 +176,6 @@ function getAllItems() {
   return allItems;
 }
 
-/**
- * ตัดสต็อกและบันทึกประวัติการเบิก
- */
 function handleRequisition(payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const requester = (payload.requester || "").trim();
@@ -208,9 +189,9 @@ function handleRequisition(payload) {
   }
   
   const now = new Date();
-  const timestampStr = Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd HH:mm:ss");
-  const dateStr = Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd");
-  const timeStr = Utilities.formatDate(now, "GMT+7", "HH:mm");
+  const timestampStr = payload.timestamp || Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd HH:mm:ss");
+  const dateStr = payload.date || Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd");
+  const timeStr = payload.time || Utilities.formatDate(now, "GMT+7", "HH:mm");
   
   const logSheet = getOrCreateLogSheet(ss);
   const updatedItems = [];
@@ -227,12 +208,10 @@ function handleRequisition(payload) {
     const reqQty = Number(itemReq.qty);
     if (isNaN(reqQty) || reqQty <= 0) continue;
     
-    // ค้นหาแถวของรายการ
     let targetRow = itemReq.rowNumber;
     const data = sheet.getDataRange().getValues();
-    
-    // ตรวจสอบความถูกต้องของแถว หรือค้นหาด้วยชื่อรายการ
     let found = false;
+    
     if (targetRow && targetRow <= data.length) {
       const checkName = String(data[targetRow - 1][cfg.nameCol - 1] || "");
       if (checkName.indexOf(itemReq.name) !== -1 || itemReq.name.indexOf(checkName.replace(/^\d+[\.\s]+/, "").trim()) !== -1) {
@@ -258,15 +237,13 @@ function handleRequisition(payload) {
     const curStock = isNaN(Number(curStockVal)) ? 0 : Number(curStockVal);
     const newStock = Math.max(0, curStock - reqQty);
     
-    // ตัดสต็อกในชีต
     sheet.getRange(targetRow, cfg.stockCol).setValue(newStock);
     
-    // บันทึกลงประวัติการเบิก
-    // หัวตาราง: วัน-เวลา | วันที่ | เวลา | ชื่อผู้เบิก | แผนก/สาขา | ชื่อรายการ | จำนวนที่เบิก | หน่วย | สต็อกเดิม | สต็อกคงเหลือ | หมายเหตุ
+    // ใส่ ' นำหน้าเพื่อให้ Google Sheets เก็บเป็น Plain Text ไม่เพี้ยนเป็น Date object
     logSheet.appendRow([
-      timestampStr,
-      dateStr,
-      timeStr,
+      "'" + timestampStr,
+      "'" + dateStr,
+      "'" + timeStr,
       requester,
       cfg.title,
       itemReq.name,
@@ -297,9 +274,6 @@ function handleRequisition(payload) {
   };
 }
 
-/**
- * เติมสต็อกสินค้า (สำหรับ Admin ผู้ดูแล)
- */
 function handleRestock(payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const adminName = (payload.adminName || payload.requester || "ผู้ดูแลระบบ").trim();
@@ -310,8 +284,8 @@ function handleRestock(payload) {
   }
   
   const now = new Date();
-  const timestampStr = Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd HH:mm:ss");
-  const dateStr = Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd");
+  const timestampStr = payload.timestamp || Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd HH:mm:ss");
+  const dateStr = payload.date || Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd");
   
   const restockSheet = getOrCreateRestockSheet(ss);
   const updatedItems = [];
@@ -352,13 +326,11 @@ function handleRestock(payload) {
     const curStock = isNaN(Number(curStockVal)) ? 0 : Number(curStockVal);
     const newStock = curStock + addQty;
     
-    // อัปเดตสต็อกในชีต
     sheet.getRange(targetRow, cfg.stockCol).setValue(newStock);
     
-    // บันทึกลงชีตประวัติการเติมสต็อก
     restockSheet.appendRow([
-      timestampStr,
-      dateStr,
+      "'" + timestampStr,
+      "'" + dateStr,
       adminName,
       cfg.title,
       itemRestock.name,
@@ -390,74 +362,67 @@ function handleRestock(payload) {
 }
 
 /**
- * ดึงประวัติการเบิกทั้งหมด
+ * ดึงประวัติการเบิกทั้งหมด (ใช้ getDisplayValues() เพื่อรักษาเวลาที่แท้จริง ไม่ให้เพี้ยนเป็น Timezone อื่น)
  */
 function getRequisitionLogs() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(LOG_SHEET_REQUISITION);
   if (!sheet) return [];
   
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (displayValues.length <= 1) return [];
   
   const logs = [];
-  // Row 1 is header
-  for (let r = 1; r < data.length; r++) {
-    const row = data[r];
+  for (let r = 1; r < displayValues.length; r++) {
+    const row = displayValues[r];
     if (!row[0] && !row[3]) continue;
     logs.push({
-      timestamp: row[0] ? String(row[0]) : "",
-      date: row[1] ? String(row[1]) : "",
-      time: row[2] ? String(row[2]) : "",
-      requester: row[3] ? String(row[3]) : "",
-      department: row[4] ? String(row[4]) : "",
-      itemName: row[5] ? String(row[5]) : "",
+      timestamp: row[0] ? String(row[0]).trim() : "",
+      date: row[1] ? String(row[1]).trim() : "",
+      time: row[2] ? String(row[2]).trim() : "",
+      requester: row[3] ? String(row[3]).trim() : "",
+      department: row[4] ? String(row[4]).trim() : "",
+      itemName: row[5] ? String(row[5]).trim() : "",
       qty: isNaN(Number(row[6])) ? 0 : Number(row[6]),
-      unit: row[7] ? String(row[7]) : "",
+      unit: row[7] ? String(row[7]).trim() : "",
       prevStock: isNaN(Number(row[8])) ? 0 : Number(row[8]),
       newStock: isNaN(Number(row[9])) ? 0 : Number(row[9]),
-      note: row[10] ? String(row[10]) : ""
-    });
-  }
-  
-  return logs.reverse(); // ล่าสุดขึ้นก่อน
-}
-
-/**
- * ดึงประวัติการเติมของ
- */
-function getRestockLogs() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(LOG_SHEET_RESTOCK);
-  if (!sheet) return [];
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  
-  const logs = [];
-  for (let r = 1; r < data.length; r++) {
-    const row = data[r];
-    if (!row[0] && !row[2]) continue;
-    logs.push({
-      timestamp: row[0] ? String(row[0]) : "",
-      date: row[1] ? String(row[1]) : "",
-      adminName: row[2] ? String(row[2]) : "",
-      department: row[3] ? String(row[3]) : "",
-      itemName: row[4] ? String(row[4]) : "",
-      qty: isNaN(Number(row[5])) ? 0 : Number(row[5]),
-      unit: row[6] ? String(row[6]) : "",
-      prevStock: isNaN(Number(row[7])) ? 0 : Number(row[7]),
-      newStock: isNaN(Number(row[8])) ? 0 : Number(row[8]),
-      note: row[9] ? String(row[9]) : ""
+      note: row[10] ? String(row[10]).trim() : ""
     });
   }
   
   return logs.reverse();
 }
 
-/**
- * ตรวจสอบหรือสร้างชีต "ประวัติการเบิก"
- */
+function getRestockLogs() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(LOG_SHEET_RESTOCK);
+  if (!sheet) return [];
+  
+  const displayValues = sheet.getDataRange().getDisplayValues();
+  if (displayValues.length <= 1) return [];
+  
+  const logs = [];
+  for (let r = 1; r < displayValues.length; r++) {
+    const row = displayValues[r];
+    if (!row[0] && !row[2]) continue;
+    logs.push({
+      timestamp: row[0] ? String(row[0]).trim() : "",
+      date: row[1] ? String(row[1]).trim() : "",
+      adminName: row[2] ? String(row[2]).trim() : "",
+      department: row[3] ? String(row[3]).trim() : "",
+      itemName: row[4] ? String(row[4]).trim() : "",
+      qty: isNaN(Number(row[5])) ? 0 : Number(row[5]),
+      unit: row[6] ? String(row[6]).trim() : "",
+      prevStock: isNaN(Number(row[7])) ? 0 : Number(row[7]),
+      newStock: isNaN(Number(row[8])) ? 0 : Number(row[8]),
+      note: row[9] ? String(row[9]).trim() : ""
+    });
+  }
+  
+  return logs.reverse();
+}
+
 function getOrCreateLogSheet(ss) {
   let sheet = ss.getSheetByName(LOG_SHEET_REQUISITION);
   if (!sheet) {
@@ -481,13 +446,13 @@ function getOrCreateLogSheet(ss) {
     headerRange.setFontColor("#ffffff");
     headerRange.setFontWeight("bold");
     sheet.setFrozenRows(1);
+    
+    // ตั้งค่าคอลัมน์ A, B, C ให้เป็น Plain Text
+    sheet.getRange(2, 1, sheet.getMaxRows() - 1, 3).setNumberFormat("@");
   }
   return sheet;
 }
 
-/**
- * ตรวจสอบหรือสร้างชีต "ประวัติการเติมสต็อก"
- */
 function getOrCreateRestockSheet(ss) {
   let sheet = ss.getSheetByName(LOG_SHEET_RESTOCK);
   if (!sheet) {
@@ -510,6 +475,7 @@ function getOrCreateRestockSheet(ss) {
     headerRange.setFontColor("#ffffff");
     headerRange.setFontWeight("bold");
     sheet.setFrozenRows(1);
+    sheet.getRange(2, 1, sheet.getMaxRows() - 1, 2).setNumberFormat("@");
   }
   return sheet;
 }
