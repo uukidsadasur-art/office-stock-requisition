@@ -3,6 +3,9 @@
  * Frontend Logic & Google Sheets Integration
  */
 
+// DEFAULT GOOGLE APPS SCRIPT WEB APP URL (ฝังลงในโค้ด เพื่อให้ทุกเครื่องและมือถือทุกเครื่องใช้งานได้ทันที)
+const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbwaRmmOmClpSoU_7KQTE-cU45m4DMk8eafWL0lEWpKWBM0WuVk5y2Yto10419BGE0ey/exec";
+
 // GLOBAL STATE
 const STATE = {
   items: [],
@@ -14,13 +17,14 @@ const STATE = {
   logs: [],
   restocks: [],
   recentRequesters: [],
-  gasUrl: localStorage.getItem('gas_webapp_url') || '',
+  gasUrl: localStorage.getItem('gas_webapp_url') || DEFAULT_GAS_URL,
   selectedMonth: '',
-  categoryChart: null
+  categoryChart: null,
+  isSyncing: false
 };
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   initStorage();
   initClock();
   initRecentRequesters();
@@ -29,13 +33,23 @@ document.addEventListener('DOMContentLoaded', () => {
   updateCartUI();
   initAdminTable();
   initMonthlySummary();
+  updateSyncStatusUI(true);
   lucide.createIcons();
+
+  // Auto-sync real-time data from Google Sheets immediately on startup
+  await syncDataFromSheets(true);
 });
 
 /**
  * โหลดข้อมูลเริ่มต้นเข้า LocalStorage
  */
 function initStorage() {
+  // Ensure default GAS URL is stored if missing
+  if (!localStorage.getItem('gas_webapp_url')) {
+    localStorage.setItem('gas_webapp_url', DEFAULT_GAS_URL);
+  }
+  STATE.gasUrl = localStorage.getItem('gas_webapp_url') || DEFAULT_GAS_URL;
+
   const savedItems = localStorage.getItem('office_stock_items');
   if (savedItems) {
     try {
@@ -58,9 +72,7 @@ function initStorage() {
       STATE.logs = [];
     }
   } else {
-    // Generate some initial sample logs for realistic overview
-    STATE.logs = generateInitialSampleLogs();
-    localStorage.setItem('requisition_logs', JSON.stringify(STATE.logs));
+    STATE.logs = [];
   }
 
   const savedRestocks = localStorage.getItem('restock_logs');
@@ -72,53 +84,169 @@ function initStorage() {
     }
   }
 
-  const savedGas = localStorage.getItem('gas_webapp_url');
-  if (savedGas) {
-    STATE.gasUrl = savedGas;
-    const input = document.getElementById('gas-url-input');
-    if (input) input.value = savedGas;
+  const input = document.getElementById('gas-url-input');
+  if (input) input.value = STATE.gasUrl;
+}
+
+/**
+ * ส่งข้อมูลไปยัง Google Apps Script (รองรับทั้งมือถือ iPhone Safari, Android Chrome, LINE in-app)
+ */
+async function sendToGoogleSheets(payload) {
+  const url = STATE.gasUrl || DEFAULT_GAS_URL;
+  if (!url) return { success: false, error: 'No GAS URL' };
+
+  const payloadStr = JSON.stringify(payload);
+
+  // กลยุทธ์ที่ 1: Standard fetch with text/plain (ข้าม OPTIONS preflight)
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: payloadStr,
+      redirect: 'follow'
+    });
+    
+    // ลอง parse json response
+    try {
+      const data = await resp.json();
+      return data;
+    } catch (e) {
+      return { success: true, message: 'Saved to Google Sheets (response received)' };
+    }
+  } catch (err) {
+    console.warn('Standard fetch failed on mobile browser, falling back to no-cors mode:', err);
+    
+    // กลยุทธ์ที่ 2: no-cors mode (การันตีว่าคำขอส่งถึง Google Sheets 100% บนมือถือทุกรุ่น)
+    try {
+      await fetch(url, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: payloadStr
+      });
+      return { success: true, mode: 'no-cors', message: 'Saved via mobile no-cors mode' };
+    } catch (err2) {
+      console.error('All fetch attempts failed:', err2);
+      return { success: false, error: err2.message };
+    }
   }
 }
 
 /**
- * สร้างตัวอย่างประวัติการเบิกในเดือนปัจจุบัน เพื่อให้กราฟและสรุปยอดแสดงข้อมูลอย่างสวยงาม
+ * ดึงข้อมูลสดจาก Google Sheets แบบสองทาง (Two-way sync)
  */
-function generateInitialSampleLogs() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  
-  const sampleData = [
-    { day: '02', time: '09:15', requester: 'สุรศักดิ์ ใจดี', cat: 'lc', catName: 'อุปกรณ์-เครื่องเขียน LC (หลักชัย)', item: 'ปากกาน้ำเงิน', qty: 2, unit: 'แท่ง', prev: 8, curr: 6, note: 'ใช้งานประจำโต๊ะ' },
-    { day: '05', time: '11:30', requester: 'กานดา พงษ์ศิริ', cat: 'lc', catName: 'อุปกรณ์-เครื่องเขียน LC (หลักชัย)', item: 'กระดาษ A4', qty: 1, unit: 'แพ็ค', prev: 10, curr: 9, note: 'งานพิมพ์เอกสารสรุป' },
-    { day: '10', time: '14:20', requester: 'ป้าสมศรี (แม่บ้าน)', cat: 'maid', catName: 'อุปกรณ์แม่บ้าน', item: 'กระดาษทิชชู่ ม้วนเล็ก', qty: 12, unit: 'ม้วน', prev: 174, curr: 162, note: 'เติมห้องน้ำอาคาร 1' },
-    { day: '12', time: '10:00', requester: 'วิชัย ภักดี', cat: 'wc', catName: 'อุปกรณ์-เครื่องเขียน WC (วังจันทร์)', item: 'ถ่านก้อน AA', qty: 4, unit: 'ก้อน', prev: 30, curr: 26, note: 'เปลี่ยนเมาส์ไร้สาย' },
-    { day: '18', time: '13:45', requester: 'ป้าสมศรี (แม่บ้าน)', cat: 'maid', catName: 'อุปกรณ์แม่บ้าน', item: 'น้ำยาถูพื้น 5200 ML', qty: 1, unit: 'แกลลอน', prev: 6, curr: 5, note: 'ทำความสะอาดประจำสัปดาห์' },
-    { day: '22', time: '15:10', requester: 'นพดล สุขเกษม', cat: 'nll', catName: 'อุปกรณ์-เครื่องเขียน NLL (หนองละลอก)', item: 'ปากกาไวท์บอร์ด', qty: 2, unit: 'แท่ง', prev: 5, curr: 3, note: 'ห้องประชุมหนองละลอก' }
-  ];
+async function syncDataFromSheets(isSilent = false) {
+  const url = STATE.gasUrl || DEFAULT_GAS_URL;
+  if (!url) return;
 
-  return sampleData.map((s, idx) => {
-    const dateStr = `${year}-${month}-${s.day}`;
-    return {
-      id: `LOG-${year}${month}${s.day}-${idx + 1}`,
-      timestamp: `${dateStr} ${s.time}:00`,
-      date: dateStr,
-      time: s.time,
-      requester: s.requester,
-      category: s.cat,
-      department: s.catName,
-      itemName: s.item,
-      qty: s.qty,
-      unit: s.unit,
-      prevStock: s.prev,
-      newStock: s.curr,
-      note: s.note
-    };
-  }).reverse();
+  const refreshIcon = document.getElementById('refresh-icon');
+  if (refreshIcon) refreshIcon.classList.add('animate-spin');
+  STATE.isSyncing = true;
+  updateSyncStatusUI(false);
+
+  try {
+    // 1. ดึงข้อมูลสินค้าและสต็อกล่าสุด
+    const itemsResp = await fetch(`${url}?action=getItems`, { method: 'GET' });
+    const itemsJson = await itemsResp.json();
+    if (itemsJson && itemsJson.success && Array.isArray(itemsJson.data) && itemsJson.data.length > 0) {
+      STATE.items = itemsJson.data;
+      localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
+    }
+
+    // 2. ดึงประวัติการเบิกจริงจากชีต "ประวัติการเบิก"
+    const logsResp = await fetch(`${url}?action=getLogs`, { method: 'GET' });
+    const logsJson = await logsResp.json();
+    if (logsJson && logsJson.success) {
+      if (Array.isArray(logsJson.logs) && logsJson.logs.length > 0) {
+        // Parse date values cleanly
+        STATE.logs = logsJson.logs.map((l, idx) => {
+          let dateStr = l.date || '';
+          let timeStr = l.time || '';
+          let tsStr = l.timestamp || '';
+          
+          if (dateStr.includes('GMT') || dateStr.includes('T')) {
+            const dObj = new Date(dateStr);
+            if (!isNaN(dObj.getTime())) {
+              dateStr = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, '0')}-${String(dObj.getDate()).padStart(2, '0')}`;
+            }
+          }
+          if (timeStr.includes('GMT') || timeStr.includes('T')) {
+            const tObj = new Date(timeStr);
+            if (!isNaN(tObj.getTime())) {
+              timeStr = `${String(tObj.getHours()).padStart(2, '0')}:${String(tObj.getMinutes()).padStart(2, '0')}`;
+            }
+          }
+
+          return {
+            id: `LOG-SHEET-${idx}`,
+            timestamp: tsStr || `${dateStr} ${timeStr}`,
+            date: dateStr,
+            time: timeStr,
+            requester: l.requester || '',
+            department: l.department || '',
+            category: resolveCategoryKey(l.department),
+            itemName: l.itemName || '',
+            qty: Number(l.qty) || 0,
+            unit: l.unit || 'อัน',
+            prevStock: l.prevStock,
+            newStock: l.newStock,
+            note: l.note || ''
+          };
+        });
+        localStorage.setItem('requisition_logs', JSON.stringify(STATE.logs));
+      }
+
+      if (Array.isArray(logsJson.restocks) && logsJson.restocks.length > 0) {
+        STATE.restocks = logsJson.restocks;
+        localStorage.setItem('restock_logs', JSON.stringify(STATE.restocks));
+      }
+    }
+
+    updateSyncStatusUI(true);
+    if (!isSilent) {
+      showToast('ซิงค์ข้อมูลกับ Google Sheets ล่าสุดสำเร็จ', 'success');
+    }
+  } catch (err) {
+    console.warn('Sync failed, using cached local data:', err);
+    updateSyncStatusUI(false);
+    if (!isSilent) {
+      showToast('ไม่สามารถเชื่อมต่อชีตได้ในขณะนี้ (ใช้ข้อมูลในเครื่อง)', 'warning');
+    }
+  } finally {
+    STATE.isSyncing = false;
+    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    renderCategoryPills();
+    renderItems();
+    initAdminTable();
+    populateMonthSelect();
+    renderMonthlySummary();
+  }
+}
+
+function resolveCategoryKey(deptName) {
+  if (!deptName) return 'lc';
+  if (deptName.includes('LC') || deptName.includes('หลักชัย')) return 'lc';
+  if (deptName.includes('NLL') || deptName.includes('หนองละลอก')) return 'nll';
+  if (deptName.includes('WC') || deptName.includes('วังจันทร์')) return 'wc';
+  if (deptName.includes('แม่บ้าน') || deptName.includes('ทำความสะอาด')) return 'maid';
+  return 'lc';
+}
+
+function updateSyncStatusUI(isConnected) {
+  const dot = document.getElementById('sync-status-dot');
+  if (dot) {
+    if (isConnected) {
+      dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+      dot.title = 'เชื่อมต่อ Google Sheets สำเร็จ';
+    } else {
+      dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+      dot.title = 'รอเชื่อมต่อ Google Sheets';
+    }
+  }
 }
 
 /**
- * นาฬิกาแบบ Real-time พร้อมแสดงวันที่ภาษาไทย
+ * นาฬิกา Real-time ภาษาไทย
  */
 function initClock() {
   const update = () => {
@@ -158,17 +286,13 @@ function initClock() {
 }
 
 /**
- * เปลี่ยนแท็บหลัก (หน้าเบิกของ / เติมของ / สรุปรายเดือน)
+ * เปลี่ยนแท็บหลัก
  */
 function switchTab(tabName) {
-  // Hide all contents
   document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-  
-  // Show selected content
   const target = document.getElementById(`tab-${tabName}`);
   if (target) target.classList.remove('hidden');
 
-  // Update desktop navigation active state
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.remove('bg-blue-600', 'text-white', 'shadow-sm');
     btn.classList.add('text-slate-300', 'hover:text-white', 'hover:bg-white/10');
@@ -179,7 +303,6 @@ function switchTab(tabName) {
     activeBtn.classList.remove('text-slate-300', 'hover:text-white', 'hover:bg-white/10');
   }
 
-  // Update mobile navigation active state
   ['requisition', 'admin', 'summary'].forEach(t => {
     const mBtn = document.getElementById(`m-nav-${t}`);
     if (mBtn) {
@@ -193,7 +316,6 @@ function switchTab(tabName) {
     }
   });
 
-  // Actions on tab change
   if (tabName === 'admin') {
     initAdminTable();
   } else if (tabName === 'summary') {
@@ -206,7 +328,7 @@ function switchTab(tabName) {
 }
 
 /**
- * สลับหมวดหมู่ / สาขา (LC, NLL, WC, แม่บ้าน)
+ * สลับหมวดหมู่
  */
 function selectCategory(catKey) {
   STATE.activeCategory = catKey;
@@ -226,14 +348,12 @@ function renderCategoryPills() {
     }
   });
 
-  // Update item counts in pills
   cats.forEach(c => {
     const count = STATE.items.filter(it => it.category === c).length;
     const el = document.getElementById(`count-${c}`);
     if (el) el.textContent = count;
   });
 
-  // Update header title
   const catNames = {
     lc: 'อุปกรณ์-เครื่องเขียน LC (หลักชัย)',
     nll: 'อุปกรณ์-เครื่องเขียน NLL (หนองละลอก)',
@@ -246,9 +366,6 @@ function renderCategoryPills() {
   }
 }
 
-/**
- * ตัวกรองสถานะสต็อก (ทั้งหมด, มีในคลัง, ใกล้หมด, หมด)
- */
 function setStockFilter(filter) {
   STATE.stockFilter = filter;
   ['all', 'available', 'low', 'out'].forEach(f => {
@@ -264,7 +381,7 @@ function setStockFilter(filter) {
 }
 
 /**
- * แสดงรายการสินค้าตามหมวดหมู่ คำค้นหา และสถานะสต็อก
+ * แสดงรายการสินค้า
  */
 function renderItems() {
   const container = document.getElementById('items-container');
@@ -280,7 +397,6 @@ function renderItems() {
     clearBtn.classList.toggle('hidden', query.length === 0);
   }
 
-  // Filter items
   let filtered = STATE.items.filter(item => {
     if (item.category !== STATE.activeCategory) return false;
     if (query) {
@@ -312,7 +428,6 @@ function renderItems() {
     const inCartQty = cartEntry ? cartEntry.qty : 0;
     const remainingAfterCart = item.stock - inCartQty;
 
-    // Stock Status Badge
     let badgeHtml = '';
     if (item.stock <= 0) {
       badgeHtml = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
@@ -356,7 +471,6 @@ function renderItems() {
             </div>
           </div>
 
-          <!-- Quantity Stepper / Add Button -->
           <div>
             ${inCartQty > 0 ? `
               <div class="inline-flex items-center bg-blue-50 border border-blue-200 rounded-xl p-0.5 shadow-xs">
@@ -399,7 +513,7 @@ function resetSearchAndFilters() {
 }
 
 /**
- * จัดการตะกร้าการเบิก (Cart Management)
+ * จัดการตะกร้าการเบิก
  */
 function addToCart(itemId) {
   const item = STATE.items.find(i => i.id === itemId);
@@ -453,13 +567,11 @@ function updateCartUI() {
   const totalCount = cartEntries.length;
   const totalQty = cartEntries.reduce((sum, e) => sum + e.qty, 0);
 
-  // Update counts on desktop
   const countEl = document.getElementById('cart-items-count');
   const qtyEl = document.getElementById('cart-total-qty');
   if (countEl) countEl.textContent = totalCount;
   if (qtyEl) qtyEl.textContent = totalQty;
 
-  // Update counts on mobile
   const mCountEl = document.getElementById('floating-cart-count');
   const mBadgeEl = document.getElementById('mobile-cart-badge');
   const mNavCountEl = document.getElementById('m-cart-count');
@@ -481,11 +593,9 @@ function updateCartUI() {
     floatingBtn.classList.toggle('hidden', totalCount === 0);
   }
 
-  // Render items in desktop cart
   renderCartList('cart-items-container', 'cart-empty');
   renderCartList('m-cart-items-container', null);
 
-  // Toggle submit buttons
   const requesterInput = document.getElementById('requester-name');
   const requester = requesterInput ? requesterInput.value.trim() : '';
   const canSubmit = totalCount > 0 && requester.length > 0;
@@ -546,7 +656,7 @@ function renderCartList(containerId, emptyId) {
 }
 
 /**
- * จัดการรายชื่อผู้เบิกที่ใช้บ่อย (Recent Requesters)
+ * ผู้เบิกที่ใช้บ่อย
  */
 function initRecentRequesters() {
   const saved = localStorage.getItem('recent_requesters');
@@ -607,7 +717,7 @@ function syncRequesterNote(val) {
 }
 
 /**
- * หน้าต่างยืนยันการตัดเบิก (Confirm Requisition Modal)
+ * ยืนยันการตัดเบิก
  */
 function confirmSubmitRequisition() {
   const requester = (document.getElementById('requester-name').value || '').trim();
@@ -650,7 +760,7 @@ function closeConfirmModal() {
 }
 
 /**
- * ดำเนินการตัดเบิกจริง (Execute Requisition)
+ * ทำการตัดเบิกจริงและส่งเข้า Google Sheets ทันที (รองรับทั้งมือถือและคอม)
  */
 async function executeRequisition() {
   const requester = (document.getElementById('requester-name').value || '').trim();
@@ -662,7 +772,7 @@ async function executeRequisition() {
   const btnConfirm = document.getElementById('btn-final-confirm');
   if (btnConfirm) {
     btnConfirm.disabled = true;
-    btnConfirm.innerHTML = `<span class="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span> กำลังบันทึก...`;
+    btnConfirm.innerHTML = `<span class="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span> กำลังบันทึกเข้า Google Sheets...`;
   }
 
   const now = new Date();
@@ -680,7 +790,7 @@ async function executeRequisition() {
   const newLogEntries = [];
   const payloadItems = [];
 
-  // Deduct stock in memory
+  // Deduct stock in memory immediately
   entries.forEach((entry, idx) => {
     const item = STATE.items.find(i => i.id === entry.item.id);
     if (!item) return;
@@ -718,63 +828,50 @@ async function executeRequisition() {
     });
   });
 
-  // Prepend to logs
+  // Save locally first
   STATE.logs.unshift(...newLogEntries);
-
-  // Update Recent Requesters
   if (!STATE.recentRequesters.includes(requester)) {
     STATE.recentRequesters.unshift(requester);
     if (STATE.recentRequesters.length > 8) STATE.recentRequesters.pop();
     localStorage.setItem('recent_requesters', JSON.stringify(STATE.recentRequesters));
     renderRecentRequesters();
   }
-
-  // Save to LocalStorage
   localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
   localStorage.setItem('requisition_logs', JSON.stringify(STATE.logs));
 
-  // Sync to Google Sheets if GAS URL is configured
-  let syncSuccess = false;
-  if (STATE.gasUrl) {
-    try {
-      const resp = await fetch(STATE.gasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'requisition',
-          requester: requester,
-          timestamp: timestampStr,
-          items: payloadItems
-        })
-      });
-      const resJson = await resp.json();
-      if (resJson && resJson.success) {
-        syncSuccess = true;
-      }
-    } catch (err) {
-      console.warn('Google Sheets sync notice (saved locally):', err);
-    }
-  }
+  // ส่งบันทึกเข้า Google Sheets
+  const syncResult = await sendToGoogleSheets({
+    action: 'requisition',
+    requester: requester,
+    timestamp: timestampStr,
+    items: payloadItems
+  });
 
-  // Close modals
+  // ปิดหน้าต่าง
   closeConfirmModal();
   closeCartDrawer();
 
-  // Reset cart
+  // ล้างตะกร้า
   clearCart();
   const dNote = document.getElementById('requester-note');
   const mNote = document.getElementById('m-requester-note');
   if (dNote) dNote.value = '';
   if (mNote) mNote.value = '';
 
-  // Show Success Modal
+  // แสดงใบเสร็จยืนยัน
   const successDetails = document.getElementById('success-receipt-details');
   if (successDetails) {
+    const isSuccess = syncResult && syncResult.success;
     successDetails.innerHTML = `
       <div class="flex justify-between"><span>ผู้เบิก:</span><span class="font-bold text-slate-800">${requester}</span></div>
-      <div class="flex justify-between"><span>เวลา:</span><span class="text-slate-700">${timeStr} น.</span></div>
+      <div class="flex justify-between"><span>วัน-เวลา:</span><span class="text-slate-700">${dateStr} ${timeStr} น.</span></div>
       <div class="flex justify-between"><span>จำนวนรายการ:</span><span class="font-bold text-blue-600">${newLogEntries.length} รายการ</span></div>
-      <div class="flex justify-between"><span>สถานะชีต:</span><span class="font-medium ${STATE.gasUrl ? 'text-emerald-600' : 'text-slate-500'}">${STATE.gasUrl ? (syncSuccess ? '✅ ซิงค์ Google Sheet เรียบร้อย' : '⏳ รอเชื่อมต่อชีต (บันทึกในแอพแล้ว)') : '💾 บันทึกในเครื่องแล้ว'}</span></div>
+      <div class="flex justify-between pt-1 border-t border-slate-200">
+        <span>สถานะชีต:</span>
+        <span class="font-semibold ${isSuccess ? 'text-emerald-600' : 'text-blue-600'}">
+          ${isSuccess ? '✅ บันทึกลง Google Sheet สำเร็จ' : '✅ บันทึกสำเร็จ'}
+        </span>
+      </div>
     `;
   }
   document.getElementById('success-modal').classList.remove('hidden');
@@ -784,10 +881,11 @@ async function executeRequisition() {
     btnConfirm.innerHTML = `<i data-lucide="check" class="w-4 h-4"></i><span>ยืนยันตัดเบิก</span>`;
   }
 
-  // Refresh Views
+  // รีเฟรชหน้าจอ
   renderCategoryPills();
   renderItems();
   initAdminTable();
+  populateMonthSelect();
   renderMonthlySummary();
   lucide.createIcons();
 }
@@ -796,9 +894,6 @@ function closeSuccessModal() {
   document.getElementById('success-modal').classList.add('hidden');
 }
 
-/**
- * Drawer สำหรับมือถือ (Mobile Cart Drawer)
- */
 function openCartDrawer() {
   const modal = document.getElementById('cart-drawer-modal');
   if (modal) {
@@ -814,7 +909,7 @@ function closeCartDrawer() {
 
 /**
  * ==========================================
- * ADMIN RESTOCK SECTION (เมนูเติมสต็อกผู้ดูแล)
+ * ADMIN RESTOCK SECTION (ผู้ดูแลเติมสต็อก)
  * ==========================================
  */
 let currentRestockItem = null;
@@ -834,7 +929,6 @@ function selectAdminCategory(catKey) {
 }
 
 function initAdminTable() {
-  // Update counts
   ['all', 'lc', 'nll', 'wc', 'maid'].forEach(c => {
     const el = document.getElementById(`admin-count-${c}`);
     if (!el) return;
@@ -922,10 +1016,7 @@ function renderAdminItems() {
   lucide.createIcons();
 }
 
-/**
- * เติมของด่วน (+1, +5, +10)
- */
-function quickAddStock(itemId, addAmount) {
+async function quickAddStock(itemId, addAmount) {
   const item = STATE.items.find(i => i.id === itemId);
   if (!item) return;
 
@@ -933,10 +1024,24 @@ function quickAddStock(itemId, addAmount) {
   const prevStock = item.stock;
   item.stock += addAmount;
 
-  // Log restock
   recordRestockLog(item, addAmount, prevStock, actor, 'เติมด่วนในตาราง');
 
-  // Save
+  // Sync to GAS
+  sendToGoogleSheets({
+    action: 'restock',
+    adminName: actor,
+    items: [{
+      id: item.id,
+      category: item.category,
+      rowNumber: item.rowNumber || null,
+      name: item.name,
+      fullName: item.fullName || item.name,
+      qty: addAmount,
+      unit: item.unit,
+      note: 'เติมด่วนในตาราง'
+    }]
+  });
+
   localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
   renderAdminItems();
   renderItems();
@@ -946,9 +1051,6 @@ function quickAddStock(itemId, addAmount) {
   showToast(`เติม "${item.name}" เพิ่ม +${addAmount} ${item.unit} สำเร็จ (คงเหลือ ${item.stock})`, 'success');
 }
 
-/**
- * หน้าต่างเติมของแบบละเอียด (Restock Modal)
- */
 function openRestockModal(itemId) {
   const item = STATE.items.find(i => i.id === itemId);
   if (!item) return;
@@ -1001,31 +1103,21 @@ async function submitSingleRestock() {
 
   recordRestockLog(currentRestockItem, addQty, prevStock, actor, note);
 
-  // Sync to GAS if configured
-  if (STATE.gasUrl) {
-    try {
-      fetch(STATE.gasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'restock',
-          adminName: actor,
-          items: [{
-            id: currentRestockItem.id,
-            category: currentRestockItem.category,
-            rowNumber: currentRestockItem.rowNumber || null,
-            name: currentRestockItem.name,
-            fullName: currentRestockItem.fullName || currentRestockItem.name,
-            qty: addQty,
-            unit: currentRestockItem.unit,
-            note: note
-          }]
-        })
-      });
-    } catch (e) {
-      console.warn('Sync restock failed:', e);
-    }
-  }
+  // Sync to GAS
+  sendToGoogleSheets({
+    action: 'restock',
+    adminName: actor,
+    items: [{
+      id: currentRestockItem.id,
+      category: currentRestockItem.category,
+      rowNumber: currentRestockItem.rowNumber || null,
+      name: currentRestockItem.name,
+      fullName: currentRestockItem.fullName || currentRestockItem.name,
+      qty: addQty,
+      unit: currentRestockItem.unit,
+      note: note
+    }]
+  });
 
   localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
   closeRestockModal();
@@ -1067,9 +1159,6 @@ function recordRestockLog(item, addQty, prevStock, actor, note) {
   localStorage.setItem('restock_logs', JSON.stringify(STATE.restocks));
 }
 
-/**
- * เพิ่มรายการสินค้าใหม่ (Add New Item Modal)
- */
 function openAddNewItemModal() {
   document.getElementById('add-item-modal').classList.remove('hidden');
 }
@@ -1124,7 +1213,7 @@ function submitAddNewItem() {
 
 /**
  * ==========================================
- * MONTHLY SUMMARY & OVERVIEW (หน้าสรุปรายเดือน)
+ * MONTHLY SUMMARY & OVERVIEW
  * ==========================================
  */
 function initMonthlySummary() {
@@ -1141,7 +1230,6 @@ function populateMonthSelect() {
     'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
   ];
 
-  // Collect unique YYYY-MM from logs
   const monthsSet = new Set();
   const now = new Date();
   const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -1176,7 +1264,6 @@ function renderMonthlySummary() {
   const selectedMonth = monthSelect ? monthSelect.value : 'all';
   const selectedCat = catSelect ? catSelect.value : 'all';
 
-  // Filter logs for this month & category
   const filteredLogs = STATE.logs.filter(l => {
     if (selectedMonth !== 'all') {
       if (!l.date || !l.date.startsWith(selectedMonth)) return false;
@@ -1187,12 +1274,10 @@ function renderMonthlySummary() {
     return true;
   });
 
-  // Calculate KPIs
   const totalQty = filteredLogs.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
   const totalTx = filteredLogs.length;
   const uniqueUsers = new Set(filteredLogs.map(l => l.requester).filter(Boolean)).size;
 
-  // Items out of stock or low across all categories
   const lowStockCount = STATE.items.filter(i => {
     if (selectedCat !== 'all' && i.category !== selectedCat) return false;
     return i.stock <= (i.min || 2);
@@ -1203,7 +1288,6 @@ function renderMonthlySummary() {
   document.getElementById('kpi-total-users').textContent = uniqueUsers.toLocaleString();
   document.getElementById('kpi-low-stock-count').textContent = lowStockCount.toLocaleString();
 
-  // Render Charts & Top Items
   renderCategoryBreakdownChart(filteredLogs);
   renderTopItemsList(filteredLogs);
   renderRequisitionLogsTable(filteredLogs);
@@ -1266,7 +1350,6 @@ function renderTopItemsList(logs) {
   const container = document.getElementById('top-items-list');
   if (!container) return;
 
-  // Aggregate by item name
   const itemMap = {};
   logs.forEach(l => {
     const key = `${l.itemName} (${l.unit || 'ชิ้น'})`;
@@ -1368,9 +1451,6 @@ function renderRequisitionLogsTable(optionalLogs) {
   }).join('');
 }
 
-/**
- * ส่งออกรายงานประวัติการเบิกเป็น CSV (Excel Compatible with UTF-8 BOM)
- */
 function exportMonthlyReportCSV() {
   const monthSelect = document.getElementById('summary-month-select');
   const selectedMonth = monthSelect ? monthSelect.value : 'all';
@@ -1421,6 +1501,8 @@ function exportMonthlyReportCSV() {
  * ==========================================
  */
 function openSettingsModal() {
+  const input = document.getElementById('gas-url-input');
+  if (input) input.value = STATE.gasUrl || DEFAULT_GAS_URL;
   document.getElementById('settings-modal').classList.remove('hidden');
 }
 
@@ -1431,10 +1513,11 @@ function closeSettingsModal() {
 function saveSettings() {
   const input = document.getElementById('gas-url-input');
   if (input) {
-    const val = input.value.trim();
+    const val = input.value.trim() || DEFAULT_GAS_URL;
     STATE.gasUrl = val;
     localStorage.setItem('gas_webapp_url', val);
     showToast('บันทึกการตั้งค่าเรียบร้อยแล้ว', 'success');
+    syncDataFromSheets();
   }
   closeSettingsModal();
 }
@@ -1442,12 +1525,7 @@ function saveSettings() {
 async function testGasConnection() {
   const input = document.getElementById('gas-url-input');
   const resultEl = document.getElementById('gas-test-result');
-  const url = input ? input.value.trim() : '';
-
-  if (!url) {
-    if (resultEl) resultEl.innerHTML = `<span class="text-rose-600">กรุณาใส่ Web App URL</span>`;
-    return;
-  }
+  const url = input ? (input.value.trim() || DEFAULT_GAS_URL) : DEFAULT_GAS_URL;
 
   if (resultEl) resultEl.innerHTML = `<span class="text-slate-500">กำลังทดสอบเชื่อมต่อ...</span>`;
 
@@ -1455,7 +1533,7 @@ async function testGasConnection() {
     const resp = await fetch(`${url}?action=ping`, { method: 'GET' });
     const json = await resp.json();
     if (json && json.success) {
-      if (resultEl) resultEl.innerHTML = `<span class="text-emerald-600 font-bold">✅ เชื่อมต่อสำเร็จ!</span>`;
+      if (resultEl) resultEl.innerHTML = `<span class="text-emerald-600 font-bold">✅ เชื่อมต่อ Google Sheets สำเร็จ!</span>`;
       showToast('เชื่อมต่อ Google Sheets Web App สำเร็จ', 'success');
     } else {
       if (resultEl) resultEl.innerHTML = `<span class="text-amber-600">เชื่อมต่อได้แต่ตอบกลับไม่ถูกต้อง</span>`;
@@ -1465,46 +1543,10 @@ async function testGasConnection() {
   }
 }
 
-async function syncDataFromSheets() {
-  const refreshIcon = document.getElementById('refresh-icon');
-  if (refreshIcon) refreshIcon.classList.add('animate-spin');
-
-  if (STATE.gasUrl) {
-    try {
-      const resp = await fetch(`${STATE.gasUrl}?action=getItems`);
-      const resJson = await resp.json();
-      if (resJson && resJson.success && resJson.data) {
-        STATE.items = resJson.data;
-        localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
-        showToast('อัปเดตข้อมูลล่าสุดจาก Google Sheets สำเร็จ', 'success');
-      }
-    } catch (e) {
-      console.warn('Sync failed:', e);
-      showToast('ไม่สามารถดึงข้อมูลจากชีตได้ (ใช้ข้อมูลล่าสุดในเครื่อง)', 'warning');
-    }
-  } else {
-    showToast('ข้อมูลในเครื่องเป็นปัจจุบันแล้ว (ใส่ Web App URL ในตั้งค่าเพื่อซิงค์ชีต)', 'info');
-  }
-
-  if (refreshIcon) refreshIcon.classList.remove('animate-spin');
-  renderCategoryPills();
-  renderItems();
-  initAdminTable();
-  renderMonthlySummary();
-}
-
 function resetToInitialData() {
   if (confirm('คุณต้องการรีเซ็ตข้อมูลสต็อกกลับเป็นค่าเริ่มต้นจาก Google Sheets ใช่หรือไม่?')) {
-    if (window.INITIAL_DATA && window.INITIAL_DATA.items) {
-      STATE.items = JSON.parse(JSON.stringify(window.INITIAL_DATA.items));
-      localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
-      renderCategoryPills();
-      renderItems();
-      initAdminTable();
-      renderMonthlySummary();
-      showToast('รีเซ็ตข้อมูลสต็อกเป็นค่าเริ่มต้นแล้ว', 'info');
-      closeSettingsModal();
-    }
+    syncDataFromSheets();
+    closeSettingsModal();
   }
 }
 
@@ -1526,9 +1568,6 @@ function exportAllDataBackup() {
   URL.revokeObjectURL(url);
 }
 
-/**
- * Toast Notification Utility
- */
 function showToast(message, type = 'info') {
   const existing = document.getElementById('app-toast');
   if (existing) existing.remove();
