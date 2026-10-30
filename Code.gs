@@ -109,6 +109,11 @@ function doPost(e) {
       const result = handleUpdateItem(payload);
       return jsonResponse(result);
     }
+
+    if (action === "exportMonthlySummary") {
+      const result = handleExportMonthlySummary(payload);
+      return jsonResponse(result);
+    }
     
     return jsonResponse({ success: false, error: "Invalid action: " + action });
   } catch (err) {
@@ -558,6 +563,205 @@ function getOrCreateRestockSheet(ss) {
     sheet.getRange(2, 1, sheet.getMaxRows() - 1, 2).setNumberFormat("@");
   }
   return sheet;
+}
+
+/**
+ * ส่งออกรายงานสรุปประจำเดือนเป็นชีต Google Sheet แบบสวยงามและมีสไตล์มืออาชีพ
+ */
+function handleExportMonthlySummary(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const monthKey = payload.month || ""; // เช่น "2026-10" หรือ "all"
+  const monthLabel = payload.monthLabel || "ภาพรวมทั้งหมด";
+  const categoryFilter = payload.category || "all";
+  const itemsSummary = payload.itemsSummary || []; // รายการสรุป { name, category, unit, qty, remainingStock }
+
+  const tabTitle = "สรุปเบิก " + (monthKey === "all" ? "ภาพรวม" : monthKey);
+  
+  // ลบชีตเดิมหากเคยส่งออกชื่อนี้ไว้ เพื่ออัปเดตใหม่
+  let reportSheet = ss.getSheetByName(tabTitle);
+  if (reportSheet) {
+    reportSheet.clear();
+  } else {
+    reportSheet = ss.insertSheet(tabTitle);
+  }
+
+  // ซ่อนเส้นตารางเริ่มต้นแล้วเปิดเส้นตาราง
+  reportSheet.setShowGridLines(true);
+
+  // 1. Title Banner (หัวเรื่องสวยหรู)
+  reportSheet.getRange("A1:G1").merge();
+  const titleCell = reportSheet.getRange("A1");
+  titleCell.setValue("📊 รายงานสรุปการเบิกใช้ของใช้สำนักงานและอุปกรณ์แม่บ้าน");
+  titleCell.setBackground("#1e293b"); // Slate 900
+  titleCell.setFontColor("#ffffff");
+  titleCell.setFontSize(14);
+  titleCell.setFontWeight("bold");
+  titleCell.setHorizontalAlignment("center");
+  titleCell.setVerticalAlignment("middle");
+  reportSheet.setRowHeight(1, 40);
+
+  // 2. Subtitle & Meta Info
+  reportSheet.getRange("A2:G2").merge();
+  const subCell = reportSheet.getRange("A2");
+  const now = new Date();
+  const generatedTimeStr = Utilities.formatDate(now, "GMT+7", "dd/MM/yyyy HH:mm");
+  subCell.setValue("ประจำเดือน: " + monthLabel + "  |  ข้อมูล ณ วันที่: " + generatedTimeStr + " น.  |  สถานะ: ข้อมูลตรงกับสต็อกระบบ");
+  subCell.setBackground("#334155"); // Slate 700
+  subCell.setFontColor("#94a3b8"); // Slate 400
+  subCell.setFontSize(10);
+  subCell.setHorizontalAlignment("center");
+  subCell.setVerticalAlignment("middle");
+  reportSheet.setRowHeight(2, 25);
+
+  // 3. KPI Cards Block (แถวที่ 4-5)
+  // KPI 1: ยอดเบิกรวม
+  reportSheet.getRange("A4:B4").merge();
+  reportSheet.getRange("A4").setValue("📦 ยอดเบิกรวมทั้งหมด").setFontWeight("bold").setFontSize(9).setFontColor("#475569").setHorizontalAlignment("center");
+  reportSheet.getRange("A5:B5").merge();
+  reportSheet.getRange("A5").setValue(payload.totalQty || 0).setFontWeight("bold").setFontSize(16).setFontColor("#2563eb").setHorizontalAlignment("center");
+  reportSheet.getRange("A4:B5").setBackground("#eff6ff").setBorder(true, true, true, true, false, false, "#bfdbfe", SpreadsheetApp.BorderStyle.SOLID);
+
+  // KPI 2: จำนวนครั้งที่เบิก
+  reportSheet.getRange("C4:D4").merge();
+  reportSheet.getRange("C4").setValue("📝 จำนวนครั้งที่ทำรายการ").setFontWeight("bold").setFontSize(9).setFontColor("#475569").setHorizontalAlignment("center");
+  reportSheet.getRange("C5:D5").merge();
+  reportSheet.getRange("C5").setValue(payload.totalTx || 0).setFontWeight("bold").setFontSize(16).setFontColor("#4f46e5").setHorizontalAlignment("center");
+  reportSheet.getRange("C4:D5").setBackground("#eef2ff").setBorder(true, true, true, true, false, false, "#c7d2fe", SpreadsheetApp.BorderStyle.SOLID);
+
+  // KPI 3: ผู้เบิกทั้งหมด
+  reportSheet.getRange("E4:E4");
+  reportSheet.getRange("E4").setValue("👥 ผู้เบิก (คน)").setFontWeight("bold").setFontSize(9).setFontColor("#475569").setHorizontalAlignment("center");
+  reportSheet.getRange("E5").setValue(payload.totalUsers || 0).setFontWeight("bold").setFontSize(16).setFontColor("#7c3aed").setHorizontalAlignment("center");
+  reportSheet.getRange("E4:E5").setBackground("#f5f3ff").setBorder(true, true, true, true, false, false, "#ddd6fe", SpreadsheetApp.BorderStyle.SOLID);
+
+  // KPI 4: ของที่สต็อกต่ำ
+  reportSheet.getRange("F4:G4").merge();
+  reportSheet.getRange("F4").setValue("⚠️ สต็อกใกล้หมด/หมด").setFontWeight("bold").setFontSize(9).setFontColor("#475569").setHorizontalAlignment("center");
+  reportSheet.getRange("F5:G5").merge();
+  reportSheet.getRange("F5").setValue(payload.lowStockCount || 0).setFontWeight("bold").setFontSize(16).setFontColor("#d97706").setHorizontalAlignment("center");
+  reportSheet.getRange("F4:G5").setBackground("#fffbeb").setBorder(true, true, true, true, false, false, "#fde68a", SpreadsheetApp.BorderStyle.SOLID);
+
+  reportSheet.setRowHeight(4, 20);
+  reportSheet.setRowHeight(5, 30);
+
+  // เว้นบรรทัดที่ 6
+  reportSheet.setRowHeight(6, 15);
+
+  // 4. Data Table Header (แถวที่ 7)
+  const headers = [
+    "ลำดับ",
+    "รายการวัสดุ / อุปกรณ์",
+    "สาขา / แผนก",
+    "ยอดเบิกในเดือนนี้",
+    "หน่วยนับ",
+    "สต็อกคงเหลือปัจจุบัน",
+    "สถานะสินค้า"
+  ];
+
+  const headerRange = reportSheet.getRange(7, 1, 1, headers.length);
+  headerRange.setValues([headers]);
+  headerRange.setBackground("#0f172a"); // Dark slate
+  headerRange.setFontColor("#ffffff");
+  headerRange.setFontWeight("bold");
+  headerRange.setFontSize(10);
+  headerRange.setHorizontalAlignment("center");
+  headerRange.setVerticalAlignment("middle");
+  reportSheet.setRowHeight(7, 30);
+
+  // 5. Populate Data Rows
+  if (itemsSummary && itemsSummary.length > 0) {
+    const tableData = [];
+    const statusColors = [];
+
+    for (let i = 0; i < itemsSummary.length; i++) {
+      const it = itemsSummary[i];
+      const curStock = Number(it.remainingStock) || 0;
+      let statusText = "พร้อมเบิก";
+      let statusBg = "#dcfce7"; // Green
+      let statusFg = "#15803d";
+
+      if (curStock <= 0) {
+        statusText = "หมดสต็อก";
+        statusBg = "#fee2e2"; // Red
+        statusFg = "#b91c1c";
+      } else if (curStock <= 2) {
+        statusText = "ใกล้หมด";
+        statusBg = "#fef3c7"; // Amber
+        statusFg = "#b45309";
+      }
+
+      tableData.push([
+        i + 1,
+        it.name,
+        it.department || it.category,
+        Number(it.qty) || 0,
+        it.unit || "อัน",
+        curStock,
+        statusText
+      ]);
+
+      statusColors.push({ bg: statusBg, fg: statusFg });
+    }
+
+    const dataRange = reportSheet.getRange(8, 1, tableData.length, headers.length);
+    dataRange.setValues(tableData);
+    dataRange.setFontSize(9.5);
+    dataRange.setVerticalAlignment("middle");
+
+    // จัด Alignment
+    reportSheet.getRange(8, 1, tableData.length, 1).setHorizontalAlignment("center"); // ลำดับ
+    reportSheet.getRange(8, 2, tableData.length, 1).setHorizontalAlignment("left"); // ชื่อ
+    reportSheet.getRange(8, 3, tableData.length, 1).setHorizontalAlignment("center"); // สาขา
+    reportSheet.getRange(8, 4, tableData.length, 1).setHorizontalAlignment("center").setFontWeight("bold").setFontColor("#1d4ed8"); // ยอดเบิก
+    reportSheet.getRange(8, 5, tableData.length, 1).setHorizontalAlignment("center"); // หน่วย
+    reportSheet.getRange(8, 6, tableData.length, 1).setHorizontalAlignment("center").setFontWeight("bold"); // คงเหลือ
+    reportSheet.getRange(8, 7, tableData.length, 1).setHorizontalAlignment("center").setFontWeight("bold"); // สถานะ
+
+    // Zebra stripes & Borders
+    for (let r = 0; r < tableData.length; r++) {
+      const rowIdx = 8 + r;
+      reportSheet.setRowHeight(rowIdx, 24);
+      if (r % 2 === 1) {
+        reportSheet.getRange(rowIdx, 1, 1, headers.length).setBackground("#f8fafc");
+      }
+      // ใส่สีสถานะ
+      const st = statusColors[r];
+      reportSheet.getRange(rowIdx, 7).setBackground(st.bg).setFontColor(st.fg);
+    }
+
+    dataRange.setBorder(true, true, true, true, true, true, "#e2e8f0", SpreadsheetApp.BorderStyle.SOLID);
+
+    // 6. Total Summary Row at Bottom
+    const totalRowIdx = 8 + tableData.length;
+    reportSheet.getRange(totalRowIdx, 1, 1, 3).merge().setValue("รวมยอดเบิกทั้งสิ้น")
+      .setFontWeight("bold").setFontSize(10).setHorizontalAlignment("right").setBackground("#f1f5f9");
+    reportSheet.getRange(totalRowIdx, 4).setValue(payload.totalQty || 0)
+      .setFontWeight("bold").setFontSize(11).setFontColor("#1d4ed8").setHorizontalAlignment("center").setBackground("#dbeafe");
+    reportSheet.getRange(totalRowIdx, 5, 1, 3).merge().setValue("รายการ")
+      .setFontWeight("bold").setFontSize(9).setFontColor("#64748b").setHorizontalAlignment("left").setBackground("#f1f5f9");
+    
+    reportSheet.getRange(totalRowIdx, 1, 1, headers.length).setBorder(true, true, true, true, false, false, "#94a3b8", SpreadsheetApp.BorderStyle.SOLID);
+    reportSheet.setRowHeight(totalRowIdx, 28);
+  }
+
+  // Freeze rows 1-7
+  reportSheet.setFrozenRows(7);
+
+  // Auto-resize columns
+  reportSheet.setColumnWidth(1, 55);  // ลำดับ
+  reportSheet.setColumnWidth(2, 260); // รายการ
+  reportSheet.setColumnWidth(3, 160); // สาขา
+  reportSheet.setColumnWidth(4, 120); // ยอดเบิก
+  reportSheet.setColumnWidth(5, 75);  // หน่วย
+  reportSheet.setColumnWidth(6, 130); // คงเหลือ
+  reportSheet.setColumnWidth(7, 100); // สถานะ
+
+  return {
+    success: true,
+    message: "ส่งออกรายงานสรุปไปยัง Google Sheet แผ่นงาน '" + tabTitle + "' เรียบร้อยแล้ว",
+    sheetTab: tabTitle,
+    spreadsheetUrl: ss.getUrl()
+  };
 }
 
 function jsonResponse(data) {
