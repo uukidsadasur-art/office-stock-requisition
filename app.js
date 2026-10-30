@@ -133,6 +133,62 @@ async function sendToGoogleSheets(payload) {
 }
 
 /**
+ * ผู้ช่วยจัดรูปแบบวัน-เวลาให้สะอาด ไม่เพี้ยน ไม่ติด Timezone อื่น
+ */
+function parseLogDateTime(rawTs, rawDate, rawTime) {
+  let ts = (rawTs || '').trim();
+  let date = (rawDate || '').trim();
+  let time = (rawTime || '').trim();
+
+  // กรณี 1: มีรูปแบบ YYYY-MM-DD HH:mm:ss หรือ YYYY-MM-DD HH:mm อยู่ใน timestamp
+  const matchFull = ts.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (matchFull) {
+    date = `${matchFull[1]}-${matchFull[2]}-${matchFull[3]}`;
+    time = `${matchFull[4]}:${matchFull[5]}`;
+    ts = `${date} ${time}${matchFull[6] ? ':' + matchFull[6] : ':00'}`;
+    return { timestamp: ts, date: date, time: time };
+  }
+
+  // กรณี 2: rawTime เป็นเวลาสะอาด เช่น "11:22" หรือ "11:22:00" และ rawDate เป็น "2026-10-30"
+  const matchDateOnly = date.match(/(\d{4})-(\d{2})-(\d{2})/);
+  const matchTimeOnly = time.match(/(\d{1,2}):(\d{2})/);
+  if (matchDateOnly && matchTimeOnly) {
+    date = `${matchDateOnly[1]}-${matchDateOnly[2]}-${matchDateOnly[3]}`;
+    time = `${String(matchTimeOnly[1]).padStart(2, '0')}:${matchTimeOnly[2]}`;
+    ts = `${date} ${time}:00`;
+    return { timestamp: ts, date: date, time: time };
+  }
+
+  // กรณี 3: rawTime เป็นรูปแบบ 1899 หรือ Date object เช่น Sat Dec 30 1899 11:22...
+  if (time.includes('1899') || time.includes('GMT')) {
+    const m = time.match(/(\d{1,2}):(\d{2})/);
+    if (m) {
+      time = `${String(m[1]).padStart(2, '0')}:${m[2]}`;
+    }
+  }
+
+  // กรณี 4: Google gviz Date(yyyy,m,d,h,m,s)
+  const gvizMatch = (ts + ' ' + date).match(/Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+)(?:,(\d+))?)?\)/);
+  if (gvizMatch) {
+    const y = gvizMatch[1];
+    const m = String(parseInt(gvizMatch[2]) + 1).padStart(2, '0');
+    const d = String(gvizMatch[3]).padStart(2, '0');
+    date = `${y}-${m}-${d}`;
+    if (gvizMatch[4] !== undefined) {
+      time = `${String(gvizMatch[4]).padStart(2, '0')}:${String(gvizMatch[5] || '0').padStart(2, '0')}`;
+    }
+    ts = `${date} ${time || '00:00'}:00`;
+    return { timestamp: ts, date: date, time: time || '00:00' };
+  }
+
+  if (!ts && date) {
+    ts = `${date} ${time || '00:00'}:00`;
+  }
+
+  return { timestamp: ts, date: date, time: time || '00:00' };
+}
+
+/**
  * ดึงข้อมูลสดจาก Google Sheets แบบสองทาง (Two-way sync)
  */
 async function syncDataFromSheets(isSilent = false) {
@@ -153,35 +209,68 @@ async function syncDataFromSheets(isSilent = false) {
       localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
     }
 
-    // 2. ดึงประวัติการเบิกจริงจากชีต "ประวัติการเบิก"
-    const logsResp = await fetch(`${url}?action=getLogs`, { method: 'GET' });
-    const logsJson = await logsResp.json();
-    if (logsJson && logsJson.success) {
-      if (Array.isArray(logsJson.logs) && logsJson.logs.length > 0) {
-        // Parse date values cleanly
-        STATE.logs = logsJson.logs.map((l, idx) => {
-          let dateStr = l.date || '';
-          let timeStr = l.time || '';
-          let tsStr = l.timestamp || '';
-          
-          if (dateStr.includes('GMT') || dateStr.includes('T')) {
-            const dObj = new Date(dateStr);
-            if (!isNaN(dObj.getTime())) {
-              dateStr = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, '0')}-${String(dObj.getDate()).padStart(2, '0')}`;
-            }
-          }
-          if (timeStr.includes('GMT') || timeStr.includes('T')) {
-            const tObj = new Date(timeStr);
-            if (!isNaN(tObj.getTime())) {
-              timeStr = `${String(tObj.getHours()).padStart(2, '0')}:${String(tObj.getMinutes()).padStart(2, '0')}`;
-            }
-          }
+    // 2. ดึงประวัติการเบิกจริง (พยายามดึงจาก Google Sheet gviz ก่อนเพื่อให้ได้ค่าวันที่เวลาที่แท้จริงแบบ 100%)
+    let loadedLogsSuccessfully = false;
+    const sheetId = '1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw';
+    try {
+      const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent('ประวัติการเบิก')}`;
+      const gvizResp = await fetch(gvizUrl);
+      const gvizText = await gvizResp.text();
+      const start = gvizText.indexOf('{');
+      const end = gvizText.lastIndexOf('}');
+      if (start !== -1 && end !== -1) {
+        const gvizJson = JSON.parse(gvizText.substring(start, end + 1));
+        if (gvizJson && gvizJson.table && Array.isArray(gvizJson.table.rows)) {
+          const parsedLogs = [];
+          gvizJson.table.rows.forEach((r, idx) => {
+            const c = r.c;
+            if (!c || c.length < 4 || !c[3]) return;
+            
+            const rawTs = c[0] ? (c[0].f || String(c[0].v || '')) : '';
+            const rawDate = c[1] ? (c[1].f || String(c[1].v || '')) : '';
+            const rawTime = c[2] ? (c[2].f || String(c[2].v || '')) : '';
+            const dt = parseLogDateTime(rawTs, rawDate, rawTime);
 
+            parsedLogs.push({
+              id: `LOG-GV-${idx}`,
+              timestamp: dt.timestamp,
+              date: dt.date,
+              time: dt.time,
+              requester: c[3] ? String(c[3].v || '').trim() : '',
+              department: c[4] ? String(c[4].v || '').trim() : '',
+              category: resolveCategoryKey(c[4] ? String(c[4].v || '') : ''),
+              itemName: c[5] ? String(c[5].v || '').trim() : '',
+              qty: c[6] ? Number(c[6].v) || 0 : 0,
+              unit: c[7] ? String(c[7].v || '').trim() : 'อัน',
+              prevStock: c[8] ? Number(c[8].v) || 0 : 0,
+              newStock: c[9] ? Number(c[9].v) || 0 : 0,
+              note: c[10] ? String(c[10].v || '').trim() : ''
+            });
+          });
+
+          if (parsedLogs.length > 0) {
+            STATE.logs = parsedLogs.reverse();
+            localStorage.setItem('requisition_logs', JSON.stringify(STATE.logs));
+            loadedLogsSuccessfully = true;
+          }
+        }
+      }
+    } catch (gvizErr) {
+      console.warn('gviz log fetch notice:', gvizErr);
+    }
+
+    // หาก gviz ไม่สำเร็จ ให้ดึงจาก Web App API
+    if (!loadedLogsSuccessfully) {
+      const logsResp = await fetch(`${url}?action=getLogs`, { method: 'GET' });
+      const logsJson = await logsResp.json();
+      if (logsJson && logsJson.success && Array.isArray(logsJson.logs) && logsJson.logs.length > 0) {
+        STATE.logs = logsJson.logs.map((l, idx) => {
+          const dt = parseLogDateTime(l.timestamp, l.date, l.time);
           return {
             id: `LOG-SHEET-${idx}`,
-            timestamp: tsStr || `${dateStr} ${timeStr}`,
-            date: dateStr,
-            time: timeStr,
+            timestamp: dt.timestamp,
+            date: dt.date,
+            time: dt.time,
             requester: l.requester || '',
             department: l.department || '',
             category: resolveCategoryKey(l.department),
@@ -196,7 +285,7 @@ async function syncDataFromSheets(isSilent = false) {
         localStorage.setItem('requisition_logs', JSON.stringify(STATE.logs));
       }
 
-      if (Array.isArray(logsJson.restocks) && logsJson.restocks.length > 0) {
+      if (logsJson && logsJson.restocks && Array.isArray(logsJson.restocks)) {
         STATE.restocks = logsJson.restocks;
         localStorage.setItem('restock_logs', JSON.stringify(STATE.restocks));
       }
@@ -1468,18 +1557,21 @@ function exportMonthlyReportCSV() {
   }
 
   const headers = ['วัน-เวลา', 'วันที่', 'เวลา', 'ชื่อผู้เบิก', 'สาขา/แผนก', 'รายการวัสดุ', 'จำนวนเบิก', 'หน่วย', 'สต็อกคงเหลือ', 'หมายเหตุ'];
-  const rows = filteredLogs.map(l => [
-    `"${l.timestamp || ''}"`,
-    `"${l.date || ''}"`,
-    `"${l.time || ''}"`,
-    `"${(l.requester || '').replace(/"/g, '""')}"`,
-    `"${(l.department || '').replace(/"/g, '""')}"`,
-    `"${(l.itemName || '').replace(/"/g, '""')}"`,
-    l.qty || 0,
-    `"${l.unit || ''}"`,
-    l.newStock !== undefined ? l.newStock : '',
-    `"${(l.note || '').replace(/"/g, '""')}"`
-  ]);
+  const rows = filteredLogs.map(l => {
+    const dt = parseLogDateTime(l.timestamp, l.date, l.time);
+    return [
+      `"${dt.timestamp || ''}"`,
+      `"${dt.date || ''}"`,
+      `"${dt.time || ''}"`,
+      `"${(l.requester || '').replace(/"/g, '""')}"`,
+      `"${(l.department || '').replace(/"/g, '""')}"`,
+      `"${(l.itemName || '').replace(/"/g, '""')}"`,
+      l.qty || 0,
+      `"${l.unit || ''}"`,
+      l.newStock !== undefined ? l.newStock : '',
+      `"${(l.note || '').replace(/"/g, '""')}"`
+    ];
+  });
 
   const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
