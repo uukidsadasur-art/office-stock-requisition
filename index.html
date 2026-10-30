@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบตัดเบิกของใช้สำนักงานและแม่บ้าน</title>
+  <!-- Google Fonts: Prompt -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js for Monthly Analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Prompt', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      font-family: 'Prompt', sans-serif;
+      background-color: #f8fafc;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-800 flex flex-col pb-20 md:pb-6">
+
+  <!-- TOP NAVIGATION BAR -->
+  <header class="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white sticky top-0 z-40 shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo & Title -->
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-300 shadow-inner">
+            <i data-lucide="package-check" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h1 class="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
+              ระบบตัดเบิกของใช้สำนักงาน & แม่บ้าน
+            </h1>
+            <p class="text-xs text-blue-200 hidden sm:block">
+              เชื่อมต่อ Google Sheets • อัปเดตสต็อกเรียลไทม์
+            </p>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs (Desktop) -->
+        <nav class="hidden md:flex items-center space-x-1">
+          <button onclick="switchTab('requisition')" id="nav-requisition" class="nav-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 bg-blue-600 text-white shadow-sm">
+            <i data-lucide="shopping-cart" class="w-4 h-4"></i>
+            <span>หน้าเบิกของ</span>
+          </button>
+          <button onclick="switchTab('admin')" id="nav-admin" class="nav-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-300 hover:text-white hover:bg-white/10">
+            <i data-lucide="boxes" class="w-4 h-4"></i>
+            <span>เติมสต็อก (ผู้ดูแล)</span>
+          </button>
+          <button onclick="switchTab('summary')" id="nav-summary" class="nav-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-300 hover:text-white hover:bg-white/10">
+            <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+            <span>สรุปรายเดือน</span>
+          </button>
+          <button onclick="openSettingsModal()" class="px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 flex items-center gap-1.5 transition" title="ตั้งค่าการเชื่อมต่อ">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            <span id="sync-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          </button>
+        </nav>
+
+        <!-- Mobile Cart Button & Settings -->
+        <div class="flex items-center space-x-2 md:hidden">
+          <button onclick="openCartDrawer()" class="relative p-2 rounded-lg bg-blue-600 text-white">
+            <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+            <span id="mobile-cart-badge" class="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-slate-900 hidden">0</span>
+          </button>
+          <button onclick="openSettingsModal()" class="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10">
+            <i data-lucide="settings" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-5 flex-1 w-full">
+
+    <!-- ========================================== -->
+    <!-- TAB 1: REQUISITION PAGE (หน้าตัดเบิกของ) -->
+    <!-- ========================================== -->
+    <section id="tab-requisition" class="tab-content block">
+      
+      <!-- Top banner & Category Selector -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 sm:p-5 mb-5">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 mb-1 border border-blue-100">
+              <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+              <span id="live-clock">กำลังโหลดเวลา...</span>
+            </div>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-900">เลือกสาขา / แผนกที่ต้องการเบิก</h2>
+            <p class="text-xs sm:text-sm text-slate-500">เลือกรายการที่ต้องการเบิก ระบบจะตัดสต็อกและบันทึกประวัติให้อัตโนมัติ</p>
+          </div>
+
+          <!-- Category Buttons -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <button onclick="selectCategory('lc')" id="cat-btn-lc" class="cat-pill px-3 py-2.5 rounded-xl border-2 font-medium text-xs sm:text-sm flex flex-col items-center justify-center transition border-blue-600 bg-blue-50/80 text-blue-700 shadow-sm">
+              <span class="text-xs text-blue-500 font-normal">สาขาที่ 1</span>
+              <span class="font-bold flex items-center gap-1">🏢 อปก. LC</span>
+              <span class="text-[11px] text-slate-500">หลักชัย (<span id="count-lc">0</span>)</span>
+            </button>
+            <button onclick="selectCategory('nll')" id="cat-btn-nll" class="cat-pill px-3 py-2.5 rounded-xl border-2 font-medium text-xs sm:text-sm flex flex-col items-center justify-center transition border-slate-200 hover:border-slate-300 text-slate-700 bg-white">
+              <span class="text-xs text-slate-400 font-normal">สาขาที่ 2</span>
+              <span class="font-bold flex items-center gap-1">🏢 อปก. NLL</span>
+              <span class="text-[11px] text-slate-500">หนองละลอก (<span id="count-nll">0</span>)</span>
+            </button>
+            <button onclick="selectCategory('wc')" id="cat-btn-wc" class="cat-pill px-3 py-2.5 rounded-xl border-2 font-medium text-xs sm:text-sm flex flex-col items-center justify-center transition border-slate-200 hover:border-slate-300 text-slate-700 bg-white">
+              <span class="text-xs text-slate-400 font-normal">สาขาที่ 3</span>
+              <span class="font-bold flex items-center gap-1">🏢 อปก. WC</span>
+              <span class="text-[11px] text-slate-500">วังจันทร์ (<span id="count-wc">0</span>)</span>
+            </button>
+            <button onclick="selectCategory('maid')" id="cat-btn-maid" class="cat-pill px-3 py-2.5 rounded-xl border-2 font-medium text-xs sm:text-sm flex flex-col items-center justify-center transition border-slate-200 hover:border-slate-300 text-slate-700 bg-white">
+              <span class="text-xs text-slate-400 font-normal">ส่วนกลาง</span>
+              <span class="font-bold flex items-center gap-1">🧹 อุปกรณ์แม่บ้าน</span>
+              <span class="text-[11px] text-slate-500">ทำความสะอาด (<span id="count-maid">0</span>)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Search & Filter bar -->
+        <div class="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center gap-3">
+          <div class="relative w-full sm:flex-1">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            <input type="text" id="search-input" oninput="renderItems()" placeholder="ค้นหาชื่ออุปกรณ์, เครื่องเขียน, ของใช้แม่บ้าน..." class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 focus:bg-white transition">
+            <button onclick="clearSearch()" id="clear-search-btn" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <div class="flex items-center gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
+            <button onclick="setStockFilter('all')" id="filter-all" class="stock-filter px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white whitespace-nowrap shadow-sm">ทั้งหมด</button>
+            <button onclick="setStockFilter('available')" id="filter-available" class="stock-filter px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 whitespace-nowrap">มีในคลัง</button>
+            <button onclick="setStockFilter('low')" id="filter-low" class="stock-filter px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 whitespace-nowrap border border-amber-200">ใกล้หมด</button>
+            <button onclick="setStockFilter('out')" id="filter-out" class="stock-filter px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 whitespace-nowrap border border-rose-200">หมดสต็อก</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIN CONTENT GRID: ITEMS LIST (LEFT) + REQUISITION CART (RIGHT) -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        
+        <!-- Items Grid (Col 1-8) -->
+        <div class="lg:col-span-8">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+              <span id="current-category-title">รายการอุปกรณ์-เครื่องเขียน LC</span>
+              <span id="items-match-count" class="text-xs font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">พบ 0 รายการ</span>
+            </div>
+            <div class="text-xs text-slate-500 flex items-center gap-1.5">
+              <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>พร้อมเบิก
+              <span class="inline-block w-2 h-2 rounded-full bg-amber-500 ml-1"></span>ใกล้หมด
+              <span class="inline-block w-2 h-2 rounded-full bg-rose-500 ml-1"></span>หมด
+            </div>
+          </div>
+
+          <!-- Items Card Container -->
+          <div id="items-container" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Dynamically Rendered by JS -->
+          </div>
+
+          <!-- Empty state -->
+          <div id="empty-state" class="hidden bg-white rounded-2xl border border-slate-200 p-12 text-center">
+            <div class="w-16 h-16 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
+              <i data-lucide="package-x" class="w-8 h-8"></i>
+            </div>
+            <h3 class="text-base font-semibold text-slate-700 mb-1">ไม่พบรายการที่ค้นหา</h3>
+            <p class="text-xs text-slate-500 mb-3">ลองเปลี่ยนคำค้นหา หรือเลือกหมวดหมู่อื่น</p>
+            <button onclick="resetSearchAndFilters()" class="text-xs font-medium text-blue-600 hover:underline">
+              ล้างการค้นหาทั้งหมด
+            </button>
+          </div>
+        </div>
+
+        <!-- REQUISITION CART DRAWER / SIDEBAR (Col 9-12) -->
+        <div class="lg:col-span-4 hidden lg:block">
+          <div class="sticky top-20 bg-white rounded-2xl shadow-sm border border-slate-200/90 p-5">
+            
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h3 class="text-base font-bold text-slate-900">ตะกร้าการเบิก</h3>
+                  <p class="text-[11px] text-slate-500">ระบุชื่อผู้เบิกเพื่อตัดสต็อก</p>
+                </div>
+              </div>
+              <button onclick="clearCart()" class="text-xs text-rose-500 hover:text-rose-700 font-medium flex items-center gap-1">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>ล้างตะกร้า
+              </button>
+            </div>
+
+            <!-- Requester Name Form -->
+            <div class="space-y-3 mb-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>ชื่อผู้เบิก <span class="text-rose-500">*จำเป็น</span></span>
+                  <span class="text-[10px] text-slate-400 font-normal">ระบุชื่อ-สกุล หรือชื่อเล่น</span>
+                </label>
+                <div class="relative">
+                  <i data-lucide="user" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                  <input type="text" id="requester-name" oninput="saveRequesterNameDraft()" placeholder="เช่น สมชาย ใจดี / ฝ่ายบุคคล" class="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
+                </div>
+              </div>
+
+              <!-- Quick Requester Name Pills (Recent Requesters) -->
+              <div id="recent-requesters-box" class="hidden">
+                <div class="text-[10px] text-slate-400 mb-1">รายชื่อที่ใช้บ่อย:</div>
+                <div id="recent-requesters-list" class="flex flex-wrap gap-1">
+                  <!-- Pills generated via JS -->
+                </div>
+              </div>
+
+              <!-- Auto Date & Time Card -->
+              <div class="bg-slate-50 rounded-xl p-3 border border-slate-200/60 text-xs text-slate-600 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <i data-lucide="calendar" class="w-4 h-4 text-blue-500"></i>
+                  <span>วันที่ & เวลาอัตโนมัติ:</span>
+                </div>
+                <span id="cart-auto-time" class="font-semibold text-slate-800">วันนี้</span>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุเพิ่มเติม (ถ้ามี)</label>
+                <input type="text" id="requester-note" placeholder="เช่น ใช้สำหรับห้องประชุมใหญ่" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
+              </div>
+            </div>
+
+            <!-- Cart Items List -->
+            <div class="mb-4">
+              <div class="text-xs font-semibold text-slate-700 mb-2 flex items-center justify-between">
+                <span>รายการที่เลือก (<span id="cart-items-count">0</span> รายการ)</span>
+                <span class="text-[11px] text-slate-500">รวม <span id="cart-total-qty">0</span> ชิ้น</span>
+              </div>
+              <div id="cart-items-container" class="max-h-64 overflow-y-auto space-y-2 pr-1">
+                <!-- Cart items rendered by JS -->
+                <div id="cart-empty" class="text-center py-8 text-slate-400 text-xs">
+                  <i data-lucide="shopping-bag" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
+                  ยังไม่มีรายการที่เลือก<br>กดปุ่ม <strong>"เบิก"</strong> ที่สินค้าเพื่อเพิ่มลงตะกร้า
+                </div>
+              </div>
+            </div>
+
+            <!-- Submit Requisition Button -->
+            <button onclick="confirmSubmitRequisition()" id="submit-req-btn" disabled class="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-sm transition shadow-sm flex items-center justify-center gap-2">
+              <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+              <span>ยืนยันการตัดเบิกสต็อก</span>
+            </button>
+            <p class="text-[11px] text-center text-slate-400 mt-2">
+              สต็อกจะถูกหักทันทีและบันทึกไปยัง Google Sheet
+            </p>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 2: ADMIN RESTOCK (เมนูเติมสต็อกสำหรับผู้ดูแล) -->
+    <!-- ========================================== -->
+    <section id="tab-admin" class="tab-content hidden">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 mb-5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+          <div>
+            <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 mb-1 border border-emerald-100">
+              <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+              <span>เมนูผู้ดูแลระบบ (Admin)</span>
+            </div>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-900">เติมของเพิ่มเข้าสต็อก (Restock)</h2>
+            <p class="text-xs sm:text-sm text-slate-500">เลือกรายการที่สั่งซื้อเข้ามาใหม่ ระบุจำนวนที่เติม และอัปเดตสต็อกไปยัง Google Sheets</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="openAddNewItemModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center gap-2 shadow-sm">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+              <span>เพิ่มรายการใหม่</span>
+            </button>
+            <button onclick="syncDataFromSheets()" class="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-medium transition flex items-center gap-1.5" title="รีเฟรชข้อมูลจาก Google Sheets">
+              <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
+              <span class="hidden sm:inline">รีเฟรชชีต</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Admin Category Tabs & Search -->
+        <div class="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div class="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+            <button onclick="selectAdminCategory('all')" id="admin-cat-all" class="admin-cat-btn px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow-sm whitespace-nowrap">ทั้งหมด (<span id="admin-count-all">0</span>)</button>
+            <button onclick="selectAdminCategory('lc')" id="admin-cat-lc" class="admin-cat-btn px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 whitespace-nowrap">LC หลักชัย (<span id="admin-count-lc">0</span>)</button>
+            <button onclick="selectAdminCategory('nll')" id="admin-cat-nll" class="admin-cat-btn px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 whitespace-nowrap">NLL หนองละลอก (<span id="admin-count-nll">0</span>)</button>
+            <button onclick="selectAdminCategory('wc')" id="admin-cat-wc" class="admin-cat-btn px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 whitespace-nowrap">WC วังจันทร์ (<span id="admin-count-wc">0</span>)</button>
+            <button onclick="selectAdminCategory('maid')" id="admin-cat-maid" class="admin-cat-btn px-3 py-2 rounded-xl text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 whitespace-nowrap">แม่บ้าน (<span id="admin-count-maid">0</span>)</button>
+          </div>
+
+          <div class="relative w-full md:w-72">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            <input type="text" id="admin-search-input" oninput="renderAdminItems()" placeholder="ค้นหารายการเพื่อเติมของ..." class="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500">
+          </div>
+        </div>
+      </div>
+
+      <!-- Restock Table -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/90 overflow-hidden">
+        <div class="p-4 bg-slate-50/70 border-b border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-bold text-slate-800">ตารางจัดการสต็อกสินค้า</span>
+            <span id="admin-match-count" class="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">111 รายการ</span>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-slate-500">ผู้ทำรายการ:</span>
+            <input type="text" id="admin-actor-name" value="ผู้ดูแลระบบ" placeholder="ชื่อผู้เติมของ" class="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-medium focus:ring-1 focus:ring-emerald-500 w-36">
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 text-xs uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4 w-12 text-center">ลำดับ</th>
+                <th class="py-3 px-4">ชื่อรายการวัสดุ/อุปกรณ์</th>
+                <th class="py-3 px-4">สาขา/หมวด</th>
+                <th class="py-3 px-4 text-center">สต็อกปัจจุบัน</th>
+                <th class="py-3 px-4 text-center">หน่วย</th>
+                <th class="py-3 px-4 text-center">เติมเพิ่ม</th>
+                <th class="py-3 px-4 text-center">การดำเนินการ</th>
+              </tr>
+            </thead>
+            <tbody id="admin-table-body" class="divide-y divide-slate-100">
+              <!-- Dynamically rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 3: MONTHLY SUMMARY & OVERVIEW (หน้าสรุปในแต่ละเดือน) -->
+    <!-- ========================================== -->
+    <section id="tab-summary" class="tab-content hidden">
+      
+      <!-- Top Month Filter & Export Controls -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 mb-5">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 mb-1 border border-indigo-100">
+              <i data-lucide="calendar-range" class="w-3.5 h-3.5"></i>
+              <span>รายงานภาพรวมและสถิติ</span>
+            </div>
+            <h2 class="text-xl sm:text-2xl font-bold text-slate-900">สรุปการเบิกของใช้ประจำเดือน</h2>
+            <p class="text-xs sm:text-sm text-slate-500">ดูสถิติการเบิกของ ยอดรวมแต่ละเดือน และรายการที่เบิกบ่อยที่สุด</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-1">
+              <i data-lucide="calendar" class="w-4 h-4 text-slate-400 ml-2"></i>
+              <select id="summary-month-select" onchange="renderMonthlySummary()" class="bg-transparent text-xs sm:text-sm font-semibold text-slate-700 py-1.5 pr-8 pl-1 focus:outline-none">
+                <!-- Dynamically populated months -->
+              </select>
+            </div>
+            <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl p-1">
+              <select id="summary-category-filter" onchange="renderMonthlySummary()" class="bg-transparent text-xs sm:text-sm font-medium text-slate-700 py-1.5 px-2 focus:outline-none">
+                <option value="all">ทุกสาขา / ทุกแผนก</option>
+                <option value="lc">LC หลักชัย</option>
+                <option value="nll">NLL หนองละลอก</option>
+                <option value="wc">WC วังจันทร์</option>
+                <option value="maid">อุปกรณ์แม่บ้าน</option>
+              </select>
+            </div>
+            <button onclick="exportMonthlyReportCSV()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="download" class="w-4 h-4"></i>
+              <span>ส่งออก Excel/CSV</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI METRIC CARDS -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500 uppercase">ยอดเบิกรวม</span>
+            <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <i data-lucide="package-minus" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span id="kpi-total-qty" class="text-2xl sm:text-3xl font-extrabold text-slate-900">0</span>
+            <span class="text-xs text-slate-500">ชิ้น</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">จำนวนสิ่งของที่ถูกตัดเบิก</p>
+        </div>
+
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500 uppercase">จำนวนครั้งที่เบิก</span>
+            <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+              <i data-lucide="check-check" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span id="kpi-total-tx" class="text-2xl sm:text-3xl font-extrabold text-slate-900">0</span>
+            <span class="text-xs text-slate-500">ครั้ง</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">บันทึกรายการในเดือนนี้</p>
+        </div>
+
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500 uppercase">ผู้เบิกทั้งหมด</span>
+            <div class="w-9 h-9 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
+              <i data-lucide="users" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span id="kpi-total-users" class="text-2xl sm:text-3xl font-extrabold text-slate-900">0</span>
+            <span class="text-xs text-slate-500">คน</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">ผู้มาทำรายการไม่ซ้ำชื่อ</p>
+        </div>
+
+        <div class="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-slate-500 uppercase">ของที่ต้องสั่งซื้อ</span>
+            <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+              <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <div class="flex items-baseline gap-2">
+            <span id="kpi-low-stock-count" class="text-2xl sm:text-3xl font-extrabold text-amber-600">0</span>
+            <span class="text-xs text-slate-500">รายการ</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">สต็อก 0 หรือต่ำกว่าเกณฑ์</p>
+        </div>
+      </div>
+
+      <!-- CHARTS & SUMMARY SECTION -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-5">
+        
+        <!-- Department Comparison Chart (6 Cols) -->
+        <div class="lg:col-span-6 bg-white rounded-2xl shadow-sm border border-slate-200/90 p-5">
+          <h3 class="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
+            <i data-lucide="pie-chart" class="w-4 h-4 text-blue-600"></i>
+            <span>สัดส่วนการเบิกของแยกตามแผนก/สาขา</span>
+          </h3>
+          <p class="text-xs text-slate-500 mb-4">เปรียบเทียบยอดการเบิกของแต่ละสาขาในเดือนที่เลือก</p>
+          <div class="h-64 flex items-center justify-center">
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Top Requisitioned Items (6 Cols) -->
+        <div class="lg:col-span-6 bg-white rounded-2xl shadow-sm border border-slate-200/90 p-5">
+          <h3 class="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
+            <i data-lucide="trending-up" class="w-4 h-4 text-emerald-600"></i>
+            <span>5 อันดับรายการที่ถูกเบิกมากที่สุด</span>
+          </h3>
+          <p class="text-xs text-slate-500 mb-4">รายการที่มีการใช้สูงสุดประจำเดือน</p>
+          <div id="top-items-list" class="space-y-3">
+            <!-- Dynamically populated top items -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- REQUISITION TRANSACTION HISTORY TABLE -->
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/90 overflow-hidden mb-5">
+        <div class="p-4 bg-slate-50/80 border-b border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-bold text-slate-900">บันทึกประวัติการเบิกของ (Requisition Log)</h3>
+            <p class="text-xs text-slate-500">แสดงรายการเบิกเรียงจากล่าสุดไปเก่าสุด</p>
+          </div>
+          <div class="relative w-full sm:w-64">
+            <i data-lucide="search" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            <input type="text" id="log-search-input" oninput="renderRequisitionLogsTable()" placeholder="ค้นหาชื่อผู้เบิก, รายการ..." class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <div class="overflow-x-auto max-h-96">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead class="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 text-xs sticky top-0">
+              <tr>
+                <th class="py-2.5 px-4">วัน-เวลา</th>
+                <th class="py-2.5 px-4">ชื่อผู้เบิก</th>
+                <th class="py-2.5 px-4">สาขา/แผนก</th>
+                <th class="py-2.5 px-4">รายการวัสดุ</th>
+                <th class="py-2.5 px-4 text-center">จำนวนที่เบิก</th>
+                <th class="py-2.5 px-4 text-center">คงเหลือ</th>
+                <th class="py-2.5 px-4">หมายเหตุ</th>
+              </tr>
+            </thead>
+            <tbody id="logs-table-body" class="divide-y divide-slate-100">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- MOBILE BOTTOM BAR -->
+  <div class="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-3 py-2 z-30 flex items-center justify-around shadow-lg">
+    <button onclick="switchTab('requisition')" id="m-nav-requisition" class="flex flex-col items-center text-blue-600">
+      <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+      <span class="text-[10px] font-medium mt-0.5">เบิกของ</span>
+    </button>
+    <button onclick="switchTab('admin')" id="m-nav-admin" class="flex flex-col items-center text-slate-500">
+      <i data-lucide="boxes" class="w-5 h-5"></i>
+      <span class="text-[10px] font-medium mt-0.5">เติมของ</span>
+    </button>
+    <button onclick="switchTab('summary')" id="m-nav-summary" class="flex flex-col items-center text-slate-500">
+      <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+      <span class="text-[10px] font-medium mt-0.5">สรุปรายเดือน</span>
+    </button>
+    <button onclick="openCartDrawer()" class="flex flex-col items-center text-slate-500 relative">
+      <div class="relative">
+        <i data-lucide="clipboard-list" class="w-5 h-5"></i>
+        <span id="m-cart-count" class="absolute -top-1 -right-2 bg-rose-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center hidden">0</span>
+      </div>
+      <span class="text-[10px] font-medium mt-0.5">ตะกร้า</span>
+    </button>
+  </div>
+
+  <!-- FLOATING CART BUTTON (MOBILE) -->
+  <div id="mobile-floating-cart" class="lg:hidden fixed bottom-16 right-4 z-30 hidden">
+    <button onclick="openCartDrawer()" class="bg-blue-600 text-white px-4 py-2.5 rounded-full shadow-xl flex items-center gap-2 font-bold text-xs border-2 border-white animate-bounce">
+      <i data-lucide="shopping-bag" class="w-4 h-4"></i>
+      <span>ตะกร้าเบิก (<span id="floating-cart-count">0</span>)</span>
+    </button>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: MOBILE CART DRAWER -->
+  <!-- ========================================== -->
+  <div id="cart-drawer-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden transition-opacity">
+    <div class="fixed inset-y-0 right-0 max-w-full flex">
+      <div class="w-screen max-w-md bg-white shadow-2xl flex flex-col">
+        <div class="p-4 bg-slate-900 text-white flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="clipboard-list" class="w-5 h-5 text-blue-400"></i>
+            <h3 class="font-bold text-base">รายการเบิกของ (ตะกร้า)</h3>
+          </div>
+          <button onclick="closeCartDrawer()" class="text-slate-400 hover:text-white p-1">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <div class="p-4 overflow-y-auto flex-1 space-y-4">
+          <!-- Mobile Requester Name -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">
+              ชื่อผู้เบิก <span class="text-rose-500">*จำเป็น</span>
+            </label>
+            <div class="relative">
+              <i data-lucide="user" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+              <input type="text" id="m-requester-name" oninput="syncRequesterName(this.value)" placeholder="ชื่อ-นามสกุล หรือชื่อเล่น" class="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+
+          <div class="bg-blue-50 rounded-xl p-3 border border-blue-100 text-xs text-blue-800 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i data-lucide="clock" class="w-4 h-4 text-blue-600"></i>
+              <span>วันเวลาอัตโนมัติ:</span>
+            </div>
+            <span id="m-cart-time" class="font-bold">--:--</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุเพิ่มเติม</label>
+            <input type="text" id="m-requester-note" oninput="syncRequesterNote(this.value)" placeholder="เช่น เบิกไปใช้สาขาหลักชัย" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-bold text-slate-800">รายการที่เลือก</span>
+              <button onclick="clearCart()" class="text-xs text-rose-500 hover:text-rose-700 font-medium">ล้างทั้งหมด</button>
+            </div>
+            <div id="m-cart-items-container" class="space-y-2">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-slate-200 bg-slate-50">
+          <div class="flex items-center justify-between text-xs mb-3 font-semibold text-slate-700">
+            <span>รวมทั้งหมด</span>
+            <span class="text-blue-600 text-sm font-bold"><span id="m-cart-total-qty">0</span> ชิ้น</span>
+          </div>
+          <button onclick="confirmSubmitRequisition()" id="m-submit-req-btn" disabled class="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm shadow-md transition">
+            ยืนยันการตัดเบิกสต็อก
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: CONFIRMATION RECEIPT MODAL -->
+  <!-- ========================================== -->
+  <div id="confirm-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl animate-scale-up">
+      <div class="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-3">
+        <i data-lucide="help-circle" class="w-6 h-6"></i>
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 text-center mb-1">ยืนยันการตัดเบิกสต็อก</h3>
+      <p class="text-xs text-slate-500 text-center mb-4">โปรดตรวจสอบรายละเอียดก่อนยืนยันการตัดยอด</p>
+
+      <div class="bg-slate-50 rounded-xl p-3 border border-slate-200 mb-4 text-xs space-y-2">
+        <div class="flex justify-between">
+          <span class="text-slate-500">ผู้เบิก:</span>
+          <span id="confirm-requester-name" class="font-bold text-slate-900">-</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-500">วันและเวลา:</span>
+          <span id="confirm-timestamp" class="font-medium text-slate-700">-</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-500">สาขา/หมวด:</span>
+          <span id="confirm-category" class="font-medium text-blue-700">-</span>
+        </div>
+        <div class="pt-2 border-t border-slate-200">
+          <span class="text-slate-500 block mb-1">รายการที่จะตัดเบิก:</span>
+          <div id="confirm-items-list" class="space-y-1 max-h-36 overflow-y-auto pl-1">
+            <!-- Items -->
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="closeConfirmModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition">
+          ยกเลิก
+        </button>
+        <button onclick="executeRequisition()" id="btn-final-confirm" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold shadow-md transition flex items-center justify-center gap-1.5">
+          <i data-lucide="check" class="w-4 h-4"></i>
+          <span>ยืนยันตัดเบิก</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: SUCCESS TOAST / POPUP -->
+  <!-- ========================================== -->
+  <div id="success-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 text-center shadow-2xl">
+      <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3 animate-bounce">
+        <i data-lucide="check-circle" class="w-10 h-10"></i>
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 mb-1">ตัดสต็อกสำเร็จเรียบร้อย!</h3>
+      <p id="success-modal-message" class="text-xs text-slate-500 mb-4">ข้อมูลการเบิกถูกบันทึกและอัปเดตสต็อกเรียบร้อยแล้ว</p>
+      
+      <div id="success-receipt-details" class="bg-slate-50 rounded-xl p-3 text-xs text-slate-600 text-left mb-4 space-y-1">
+        <!-- Details -->
+      </div>
+
+      <button onclick="closeSuccessModal()" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-sm transition">
+        ตกลง / ปิดหน้าต่าง
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: QUICK RESTOCK MODAL (ADMIN) -->
+  <!-- ========================================== -->
+  <div id="restock-item-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+            <i data-lucide="plus-circle" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">เติมของเพิ่มเข้าสต็อก</h3>
+            <p class="text-xs text-slate-500">อัปเดตสต็อกของรายการนี้</p>
+          </div>
+        </div>
+        <button onclick="closeRestockModal()" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 mb-5">
+        <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <span class="text-[11px] text-slate-400 uppercase font-semibold block" id="restock-item-cat">สาขา</span>
+          <h4 class="font-bold text-slate-800 text-base" id="restock-item-name">ชื่อรายการ</h4>
+          <div class="mt-1 flex items-center gap-2 text-xs text-slate-600">
+            <span>สต็อกเดิมคงเหลือ:</span>
+            <span class="font-bold text-slate-900" id="restock-item-current-stock">0</span>
+            <span id="restock-item-unit">อัน</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">จำนวนที่นำมาเติมเพิ่ม</label>
+          <div class="flex items-center gap-2">
+            <button onclick="adjustRestockInput(-1)" class="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-lg flex items-center justify-center">-</button>
+            <input type="number" id="restock-qty-input" min="1" value="10" class="flex-1 py-2 text-center text-lg font-bold border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500">
+            <button onclick="adjustRestockInput(1)" class="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-lg flex items-center justify-center">+</button>
+          </div>
+          <!-- Quick increment buttons -->
+          <div class="flex items-center gap-1.5 mt-2">
+            <button onclick="setRestockInput(5)" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600">+5</button>
+            <button onclick="setRestockInput(10)" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600">+10</button>
+            <button onclick="setRestockInput(20)" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600">+20</button>
+            <button onclick="setRestockInput(50)" class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-medium text-slate-600">+50</button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุการเติมของ</label>
+          <input type="text" id="restock-note-input" placeholder="เช่น สั่งซื้อลอตใหม่ / รับเข้าจาก supplier" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="closeRestockModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition">
+          ยกเลิก
+        </button>
+        <button onclick="submitSingleRestock()" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold shadow-md transition flex items-center justify-center gap-1.5">
+          <i data-lucide="check" class="w-4 h-4"></i>
+          <span>บันทึกการเติมของ</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: ADD NEW ITEM (ADMIN) -->
+  <!-- ========================================== -->
+  <div id="add-item-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+            <i data-lucide="plus" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">เพิ่มรายการวัสดุ/อุปกรณ์ใหม่</h3>
+            <p class="text-xs text-slate-500">เพิ่มรายการเข้าสู่คลังสินค้า</p>
+          </div>
+        </div>
+        <button onclick="closeAddNewItemModal()" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 mb-5">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">หมวดหมู่ / แผนก</label>
+          <select id="new-item-category" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm">
+            <option value="lc">อุปกรณ์-เครื่องเขียน LC (หลักชัย)</option>
+            <option value="nll">อุปกรณ์-เครื่องเขียน NLL (หนองละลอก)</option>
+            <option value="wc">อุปกรณ์-เครื่องเขียน WC (วังจันทร์)</option>
+            <option value="maid">อุปกรณ์แม่บ้าน (ทำความสะอาด)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อรายการวัสดุ/อุปกรณ์ <span class="text-rose-500">*</span></label>
+          <input type="text" id="new-item-name" placeholder="เช่น แฟ้มสันหนา 2 นิ้ว" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">จำนวนตั้งต้น</label>
+            <input type="number" id="new-item-stock" min="0" value="5" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">หน่วยนับ</label>
+            <input type="text" id="new-item-unit" value="อัน" placeholder="เช่น อัน, แพ็ค, กล่อง" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm">
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="closeAddNewItemModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition">
+          ยกเลิก
+        </button>
+        <button onclick="submitAddNewItem()" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold shadow-md transition">
+          เพิ่มรายการ
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: SETTINGS & GOOGLE SHEETS SYNC -->
+  <!-- ========================================== -->
+  <div id="settings-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center">
+            <i data-lucide="settings" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">ตั้งค่าการเชื่อมต่อ Google Sheets</h3>
+            <p class="text-xs text-slate-500">ซิงค์ข้อมูลสต็อกแบบสองทาง (Two-way Sync)</p>
+          </div>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 mb-5 text-xs text-slate-600">
+        <div class="bg-blue-50 p-3 rounded-xl border border-blue-200 text-blue-900">
+          <div class="font-bold flex items-center gap-1.5 mb-1">
+            <i data-lucide="sheet" class="w-4 h-4 text-emerald-600"></i>
+            <span>Google Spreadsheet ที่เชื่อมต่อ:</span>
+          </div>
+          <a href="https://docs.google.com/spreadsheets/d/1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw/edit?usp=sharing" target="_blank" class="text-blue-700 hover:underline break-all block mt-0.5 font-medium">
+            https://docs.google.com/spreadsheets/d/1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw/edit
+          </a>
+          <div class="text-[11px] text-blue-700 mt-1">
+            ครอบคลุม 4 แผ่นงาน: 1. อปก.คข.LC 2. อปก.คข.NLL 3. อปก.คข.WC 4. อปก.แม่บ้าน ต.ค.
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">
+            Google Apps Script Web App URL:
+          </label>
+          <input type="url" id="gas-url-input" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-blue-500">
+          <p class="text-[11px] text-slate-400 mt-1">
+            (นำ URL ที่ได้จากเมนู Deploy > Web App ของ Google Apps Script มาใส่ที่นี่ เพื่อให้หน้าเว็บส่งข้อมูลการตัดสต็อกกลับไปบันทึกที่ชีตทันที)
+          </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="testGasConnection()" id="btn-test-gas" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-medium transition flex items-center gap-1.5">
+            <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+            <span>ทดสอบการเชื่อมต่อ</span>
+          </button>
+          <span id="gas-test-result" class="text-xs"></span>
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+          <button onclick="resetToInitialData()" class="text-rose-600 hover:underline text-[11px]">
+            รีเซ็ตข้อมูลสต็อกกลับเป็นค่าเริ่มต้น
+          </button>
+          <button onclick="exportAllDataBackup()" class="text-blue-600 hover:underline text-[11px]">
+            ดาวน์โหลดไฟล์สำรองข้อมูล (JSON)
+          </button>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button onclick="closeSettingsModal()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold">
+          ปิด
+        </button>
+        <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-sm">
+          บันทึกการตั้งค่า
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOAD INITIAL DATA -->
+  <script src="data.js"></script>
+  <!-- MAIN APP SCRIPT -->
+  <script src="app.js"></script>
+
+</body>
+</html>
