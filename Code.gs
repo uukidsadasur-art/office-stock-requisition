@@ -104,6 +104,11 @@ function doPost(e) {
       const result = handleAddItem(payload);
       return jsonResponse(result);
     }
+
+    if (action === "updateItem") {
+      const result = handleUpdateItem(payload);
+      return jsonResponse(result);
+    }
     
     return jsonResponse({ success: false, error: "Invalid action: " + action });
   } catch (err) {
@@ -358,6 +363,81 @@ function handleRestock(payload) {
     timestamp: timestampStr,
     adminName: adminName,
     updatedItems: updatedItems
+  };
+}
+
+/**
+ * แก้ไขยอดสต็อกคงเหลือโดยตรง (Direct Stock Update by Admin)
+ */
+function handleUpdateItem(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const adminName = (payload.adminName || "ผู้ดูแลระบบ").trim();
+  const catKey = payload.category;
+  const cfg = SHEET_CONFIGS[catKey];
+  if (!cfg) return { success: false, error: "ไม่พบหมวดหมู่นี้" };
+
+  const sheet = ss.getSheetByName(cfg.tabName);
+  if (!sheet) return { success: false, error: "ไม่พบชีต: " + cfg.tabName };
+
+  const newStock = Number(payload.stock);
+  if (isNaN(newStock) || newStock < 0) return { success: false, error: "จำนวนสต็อกไม่ถูกต้อง" };
+
+  const data = sheet.getDataRange().getValues();
+  let targetRow = payload.rowNumber;
+  let found = false;
+
+  if (targetRow && targetRow <= data.length) {
+    found = true;
+  } else {
+    for (let r = cfg.startRow - 1; r < data.length; r++) {
+      const curName = String(data[r][cfg.nameCol - 1] || "");
+      const cleanCur = curName.replace(/^\d+[\.\s]+/, "").trim();
+      if (cleanCur === payload.name || curName === payload.fullName) {
+        targetRow = r + 1;
+        found = true;
+        break;
+      }
+    }
+  }
+
+  if (!found || !targetRow) return { success: false, error: "ไม่พบแถวของรายการใน Google Sheet" };
+
+  const curStockVal = sheet.getRange(targetRow, cfg.stockCol).getValue();
+  const prevStock = isNaN(Number(curStockVal)) ? 0 : Number(curStockVal);
+
+  // อัปเดตยอดสต็อกใหม่ลงชีต
+  sheet.getRange(targetRow, cfg.stockCol).setValue(newStock);
+
+  // อัปเดตหน่วยนับ ถ้ามีการส่งมา
+  if (payload.unit && cfg.unitCol) {
+    sheet.getRange(targetRow, cfg.unitCol).setValue(payload.unit);
+  }
+
+  // บันทึกลงชีตประวัติการเติมสต็อก/ปรับปรุงยอด
+  const restockSheet = getOrCreateRestockSheet(ss);
+  const now = new Date();
+  const timestampStr = payload.timestamp || Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd HH:mm:ss");
+  const dateStr = payload.date || Utilities.formatDate(now, "GMT+7", "yyyy-MM-dd");
+
+  restockSheet.appendRow([
+    "'" + timestampStr,
+    "'" + dateStr,
+    adminName,
+    cfg.title,
+    payload.name,
+    newStock - prevStock, // ส่วนต่าง
+    payload.unit || "อัน",
+    prevStock,
+    newStock,
+    payload.note || "แก้ไขสต็อกคงเหลือโดยตรง"
+  ]);
+
+  return {
+    success: true,
+    message: "แก้ไขยอดสต็อกสำเร็จ",
+    prevStock: prevStock,
+    newStock: newStock,
+    targetRow: targetRow
   };
 }
 
