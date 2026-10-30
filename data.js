@@ -1,4 +1,4 @@
-﻿window.INITIAL_DATA = {
+window.INITIAL_DATA = {
     "spreadsheetId":  "1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw",
     "spreadsheetUrl":  "https://docs.google.com/spreadsheets/d/1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw/edit",
     "categories":  [
@@ -2932,3 +2932,5 @@
                   }
               ]
 };
+// DEFAULT BACKEND GOOGLE APPS SCRIPT WEB APP URL
+window.DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbwaRmmOmClpSoU_7KQTE-cU45m4DMk8eafWL0lEWpKWBM0WuVk5y2Yto10419BGE0ey/exec";
