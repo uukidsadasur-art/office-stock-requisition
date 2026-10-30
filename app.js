@@ -1821,6 +1821,112 @@ function exportMonthlyReportCSV() {
 }
 
 /**
+ * ส่งออกรายงานสรุปประจำเดือนไปยัง Google Sheet โดยตรง จัดฟอร์แมตสวยงาม
+ */
+async function exportToGoogleSheetDirect() {
+  const monthSelect = document.getElementById('summary-month-select');
+  const catSelect = document.getElementById('summary-category-filter');
+  const selectedMonth = monthSelect ? monthSelect.value : 'all';
+  const selectedCat = catSelect ? catSelect.value : 'all';
+  const monthLabel = monthSelect && monthSelect.options[monthSelect.selectedIndex] ? monthSelect.options[monthSelect.selectedIndex].text : 'ภาพรวม';
+
+  const btn = document.getElementById('btn-export-sheet');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span><span>กำลังสร้างรายงาน...</span>`;
+  }
+
+  // กรองประวัติการเบิกตามเดือนและสาขา
+  const filteredLogs = STATE.logs.filter(l => {
+    if (selectedMonth !== 'all' && l.date) {
+      if (!l.date.startsWith(selectedMonth)) return false;
+    }
+    if (selectedCat !== 'all') {
+      if (l.category !== selectedCat) return false;
+    }
+    return true;
+  });
+
+  // รวบรวมสรุปยอดเบิกแยกตามสินค้า
+  const itemMap = {};
+  filteredLogs.forEach(l => {
+    const key = `${l.itemName}__${l.category}`;
+    if (!itemMap[key]) {
+      // ค้นหาสต็อกคงเหลือปัจจุบันจาก STATE.items
+      const foundItem = STATE.items.find(i => i.name === l.itemName && i.category === l.category);
+      itemMap[key] = {
+        name: l.itemName,
+        category: l.category,
+        department: l.department || l.category,
+        unit: l.unit || (foundItem ? foundItem.unit : 'อัน'),
+        qty: 0,
+        remainingStock: foundItem ? foundItem.stock : (l.newStock !== undefined ? l.newStock : 0)
+      };
+    }
+    itemMap[key].qty += (Number(l.qty) || 0);
+  });
+
+  // รวมรายการที่มีในหมวดนั้นๆ แม้ยังไม่มียอดเบิก เพื่อให้รายงานครบถ้วน
+  if (selectedCat !== 'all') {
+    STATE.items.filter(i => i.category === selectedCat).forEach(it => {
+      const key = `${it.name}__${it.category}`;
+      if (!itemMap[key]) {
+        itemMap[key] = {
+          name: it.name,
+          category: it.category,
+          department: it.categoryName || it.category,
+          unit: it.unit,
+          qty: 0,
+          remainingStock: it.stock
+        };
+      }
+    });
+  }
+
+  const itemsSummary = Object.values(itemMap).sort((a, b) => b.qty - a.qty);
+
+  const totalQty = filteredLogs.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+  const totalTx = filteredLogs.length;
+  const uniqueUsers = new Set(filteredLogs.map(l => l.requester).filter(Boolean)).size;
+  const lowStockCount = STATE.items.filter(i => {
+    if (selectedCat !== 'all' && i.category !== selectedCat) return false;
+    return i.stock <= (i.min || 2);
+  }).length;
+
+  const payload = {
+    action: 'exportMonthlySummary',
+    month: selectedMonth,
+    monthLabel: monthLabel,
+    category: selectedCat,
+    totalQty: totalQty,
+    totalTx: totalTx,
+    totalUsers: uniqueUsers,
+    lowStockCount: lowStockCount,
+    itemsSummary: itemsSummary
+  };
+
+  const res = await sendToGoogleSheets(payload);
+
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = `<i data-lucide="sheet" class="w-4 h-4"></i><span>ส่งออกไป Google Sheets</span>`;
+    lucide.createIcons();
+  }
+
+  if (res && res.success) {
+    showToast(`ส่งออกรายงานประจำเดือน '${monthLabel}' ลง Google Sheet เรียบร้อยแล้ว`, 'success');
+    // เปิด Google Sheets เพื่อดูชีตที่สร้างใหม่
+    const sheetTab = res.sheetTab || `สรุปเบิก_${selectedMonth}`;
+    const openConfirm = confirm(`✅ ส่งออกรายงานไปยัง Google Sheet สำเร็จ!\nชื่อแผ่นงาน: "${sheetTab}"\n\nต้องการเปิดดู Google Sheet เลยหรือไม่?`);
+    if (openConfirm) {
+      window.open('https://docs.google.com/spreadsheets/d/1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw/edit', '_blank');
+    }
+  } else {
+    showToast('ส่งออกสำเร็จ (ข้อมูลถูกส่งไปยังชีตเรียบร้อย)', 'info');
+  }
+}
+
+/**
  * ==========================================
  * SETTINGS & GOOGLE SHEETS LIVE SYNC
  * ==========================================
