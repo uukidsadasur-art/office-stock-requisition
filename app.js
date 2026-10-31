@@ -191,11 +191,107 @@ function parseLogDateTime(rawTs, rawDate, rawTime) {
 }
 
 /**
+ * ฟังก์ชันดึงข้อมูลสินค้าและสต็อกคงเหลือสดตรงจาก Google Sheet ผ่าน gviz ทั้ง 4 Sheet
+ * ทำให้เมื่อแก้ไขตัวเลขใน Google Sheet โดยตรง ค่าใน Dashboard จะเปลี่ยนทันที 100%
+ */
+async function fetchItemsDirectFromGoogleSheets() {
+  const sheetId = '1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw';
+  const configs = [
+    { id: 'lc', name: 'อุปกรณ์-เครื่องเขียน LC', sheetTab: 'อปก.คข.LC ', type: 'stationery', deptName: 'อุปกรณ์-เครื่องเขียน LC (หลักชัย)' },
+    { id: 'nll', name: 'อุปกรณ์-เครื่องเขียน NLL', sheetTab: 'อปก.คข.NLL', type: 'stationery', deptName: 'อุปกรณ์-เครื่องเขียน NLL (หนองละลอก)' },
+    { id: 'wc', name: 'อุปกรณ์-เครื่องเขียน WC', sheetTab: 'อปก.คข.WC', type: 'stationery', deptName: 'อุปกรณ์-เครื่องเขียน WC (วังจันทร์)' },
+    { id: 'maid', name: 'อุปกรณ์แม่บ้าน', sheetTab: 'อปก.แม่บ้าน ต.ค.', type: 'maid', deptName: 'อุปกรณ์แม่บ้าน' }
+  ];
+
+  const fetchedItems = [];
+
+  for (const cfg of configs) {
+    try {
+      const encodedTab = encodeURIComponent(cfg.sheetTab);
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodedTab}&t=${Date.now()}`;
+      const resp = await fetch(url);
+      const text = await resp.text();
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start === -1 || end === -1) continue;
+
+      const json = JSON.parse(text.substring(start, end + 1));
+      if (!json || !json.table || !Array.isArray(json.table.rows)) continue;
+
+      let idx = 1;
+      json.table.rows.forEach((row, rIdx) => {
+        const c = row.c;
+        if (!c) return;
+
+        if (cfg.type === 'maid') {
+          // แม่บ้าน: Col 3 (รายการ), Col 4 (จำนวนคงเหลือ/MAX), Col 5 (หน่วย), Col 10 (หมายเหตุ)
+          if (c.length > 3 && c[3] && c[3].v !== null) {
+            const rawName = String(c[3].v).trim();
+            if (rawName && rawName !== 'รายการวัสดุ' && !rawName.includes('อุปกรณ์ ทำความสะอาด')) {
+              const rawStock = (c.length > 4 && c[4] && c[4].v !== null) ? c[4].v : 0;
+              const unitVal = (c.length > 5 && c[5] && c[5].v !== null) ? String(c[5].v).trim() : 'อัน';
+              const noteVal = (c.length > 10 && c[10] && c[10].v !== null) ? String(c[10].v).trim() : '';
+              const cleanName = rawName.replace(/^\d+[\.\s]+/, '').trim();
+
+              fetchedItems.push({
+                id: `${cfg.id}_${rIdx + 1}`,
+                rowNumber: rIdx + 1,
+                category: cfg.id,
+                categoryName: cfg.deptName,
+                sheetTab: cfg.sheetTab,
+                code: String(idx),
+                name: cleanName,
+                fullName: rawName,
+                stock: isNaN(Number(rawStock)) ? 0 : Number(rawStock),
+                min: 0,
+                unit: unitVal || 'อัน',
+                note: noteVal
+              });
+              idx++;
+            }
+          }
+        } else {
+          // เครื่องเขียน LC, NLL, WC: Col 1 (รายการ), Col 2 (จำนวนคงเหลือ/MAX), Col 3 (MIN), Col 4 (หน่วย)
+          if (c.length > 1 && c[1] && c[1].v !== null) {
+            const rawName = String(c[1].v).trim();
+            if (rawName && !rawName.includes('เช็คของ') && rawName !== 'วัสดุ อปก.') {
+              const rawStock = (c.length > 2 && c[2] && c[2].v !== null) ? c[2].v : 0;
+              const rawMin = (c.length > 3 && c[3] && c[3].v !== null && String(c[3].v) !== '-') ? c[3].v : 0;
+              const unitVal = (c.length > 4 && c[4] && c[4].v !== null) ? String(c[4].v).trim() : 'อัน';
+              const cleanName = rawName.replace(/^\d+[\.\s]+/, '').trim();
+
+              fetchedItems.push({
+                id: `${cfg.id}_${rIdx + 1}`,
+                rowNumber: rIdx + 1,
+                category: cfg.id,
+                categoryName: cfg.deptName,
+                sheetTab: cfg.sheetTab,
+                code: String(idx),
+                name: cleanName,
+                fullName: rawName,
+                stock: isNaN(Number(rawStock)) ? 0 : Number(rawStock),
+                min: isNaN(Number(rawMin)) ? 0 : Number(rawMin),
+                unit: unitVal || 'อัน',
+                note: ''
+              });
+              idx++;
+            }
+          }
+        }
+      });
+    } catch (e) {
+      console.warn(`Direct fetch from sheet ${cfg.sheetTab} notice:`, e);
+    }
+  }
+
+  return fetchedItems;
+}
+
+/**
  * ดึงข้อมูลสดจาก Google Sheets แบบสองทาง (Two-way sync)
  */
 async function syncDataFromSheets(isSilent = false) {
   const url = STATE.gasUrl || DEFAULT_GAS_URL;
-  if (!url) return;
 
   const refreshIcon = document.getElementById('refresh-icon');
   if (refreshIcon) refreshIcon.classList.add('animate-spin');
@@ -203,19 +299,26 @@ async function syncDataFromSheets(isSilent = false) {
   updateSyncStatusUI(false);
 
   try {
-    // 1. ดึงข้อมูลสินค้าและสต็อกล่าสุด
-    const itemsResp = await fetch(`${url}?action=getItems`, { method: 'GET' });
-    const itemsJson = await itemsResp.json();
-    if (itemsJson && itemsJson.success && Array.isArray(itemsJson.data) && itemsJson.data.length > 0) {
-      STATE.items = itemsJson.data;
+    // 1. ดึงข้อมูลสินค้าและยอดคงเหลือสดตรงจาก Google Sheets ทั้ง 4 Sheet ผ่าน gviz
+    const directItems = await fetchItemsDirectFromGoogleSheets();
+    if (directItems && directItems.length > 0) {
+      STATE.items = directItems;
       localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
+    } else if (url) {
+      // Fallback ไปที่ Google Apps Script API ถ้า gviz ขัดข้อง
+      const itemsResp = await fetch(`${url}?action=getItems`, { method: 'GET' });
+      const itemsJson = await itemsResp.json();
+      if (itemsJson && itemsJson.success && Array.isArray(itemsJson.data) && itemsJson.data.length > 0) {
+        STATE.items = itemsJson.data;
+        localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
+      }
     }
 
-    // 2. ดึงประวัติการเบิกจริง (พยายามดึงจาก Google Sheet gviz ก่อนเพื่อให้ได้ค่าวันที่เวลาที่แท้จริงแบบ 100%)
+    // 2. ดึงประวัติการเบิกจริงจากชีต "ประวัติการเบิก"
     let loadedLogsSuccessfully = false;
     const sheetId = '1FFbHvRj_jlG-o4U9uI1UnMz0MCNUFHuV-eMzKsA5UKw';
     try {
-      const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent('ประวัติการเบิก')}`;
+      const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent('ประวัติการเบิก')}&t=${Date.now()}`;
       const gvizResp = await fetch(gvizUrl);
       const gvizText = await gvizResp.text();
       const start = gvizText.indexOf('{');
@@ -262,7 +365,7 @@ async function syncDataFromSheets(isSilent = false) {
     }
 
     // หาก gviz ไม่สำเร็จ ให้ดึงจาก Web App API
-    if (!loadedLogsSuccessfully) {
+    if (!loadedLogsSuccessfully && url) {
       const logsResp = await fetch(`${url}?action=getLogs`, { method: 'GET' });
       const logsJson = await logsResp.json();
       if (logsJson && logsJson.success && Array.isArray(logsJson.logs) && logsJson.logs.length > 0) {
@@ -295,7 +398,7 @@ async function syncDataFromSheets(isSilent = false) {
 
     updateSyncStatusUI(true);
     if (!isSilent) {
-      showToast('ซิงค์ข้อมูลกับ Google Sheets ล่าสุดสำเร็จ', 'success');
+      showToast('ซิงค์ยอดคงเหลือล่าสุดจาก Google Sheet ทั้ง 4 สาขาสำเร็จ', 'success');
     }
   } catch (err) {
     console.warn('Sync failed, using cached local data:', err);
@@ -1461,6 +1564,7 @@ async function submitEditStockDirect() {
   recordRestockLog(currentEditStockItem, Math.abs(diff), prevStock, actor, logNote);
 
   // ส่งบันทึกตรงเข้า Google Sheets
+  // 1. ส่งผ่าน action updateItem
   sendToGoogleSheets({
     action: 'updateItem',
     adminName: actor,
@@ -1472,6 +1576,34 @@ async function submitEditStockDirect() {
     unit: currentEditStockItem.unit,
     note: logNote
   });
+
+  // 2. Fallback ที่การันตีการทำงานกับ Google Apps Script ทุกเวอร์ชันที่มีอยู่:
+  // ถ้า diff > 0 ใช้ restock, ถ้า diff < 0 ใช้ requisition
+  if (diff > 0) {
+    sendToGoogleSheets({
+      action: 'restock',
+      adminName: actor,
+      items: [{
+        category: currentEditStockItem.category,
+        name: currentEditStockItem.name,
+        qty: diff,
+        unit: currentEditStockItem.unit,
+        note: `ปรับยอดสต็อก (+${diff})`
+      }]
+    });
+  } else if (diff < 0) {
+    sendToGoogleSheets({
+      action: 'requisition',
+      requester: `ปรับยอดโดย ${actor}`,
+      items: [{
+        category: currentEditStockItem.category,
+        name: currentEditStockItem.name,
+        qty: Math.abs(diff),
+        unit: currentEditStockItem.unit,
+        note: `ปรับยอดสต็อก (${diff})`
+      }]
+    });
+  }
 
   localStorage.setItem('office_stock_items', JSON.stringify(STATE.items));
 
